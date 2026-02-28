@@ -5,7 +5,7 @@ state: State = .not_seen,
 count: u32 = 0,
 
 pub const Tag = enum {
-    bool,
+    boolean,
     string,
     int,
     float,

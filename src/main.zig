@@ -1,6 +1,10 @@
 const std = @import("std");
 const yazap = @import("yazap");
 
+pub fn foo() void {
+    std.debug.print("FOOOO\n", .{});
+}
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -10,11 +14,20 @@ pub fn main() !void {
     var parser = yazap.ArgParser.init(allocator, args);
     defer parser.deinit();
 
-    try parser.addOption("foo", .{ .tag = .bool });
-    try parser.addOption("bar", .{ .tag = .bool });
+    try parser.addBoolOption("foo");
+    try parser.addBoolOption("bar");
+    try parser.addStringOption("baz");
 
-    try parser.parse();
+    var result = try parser.parse();
+    defer result.deinit();
 
     parser.dumpOptions();
     parser.dumpUnknown();
+
+    result.dumpResults();
+
+    const foo_result = try result.expectBool("foo");
+    if (foo_result) {
+        foo();
+    }
 }
