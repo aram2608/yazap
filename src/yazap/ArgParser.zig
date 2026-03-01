@@ -38,20 +38,32 @@ pub fn deinit(self: *Parser) void {
 //         else => return error.UnknownType,
 //     }
 // }
+//
 
-pub fn addBoolOption(self: *Parser, name: []const u8) !void {
+pub fn addOption(self: *Parser, name: []const u8, tag: Option.Tag) !void {
+    try switch (tag) {
+        .boolean => self.addBoolOption(name),
+        .float => self.addFloatOption(name),
+        .int => self.addIntOption(name),
+        .string => self.addStringOption(name),
+    };
+}
+
+// Internal helpers //
+
+fn addBoolOption(self: *Parser, name: []const u8) !void {
     try self.options.put(name, .{ .tag = .boolean });
 }
 
-pub fn addIntOption(self: *Parser, name: []const u8) !void {
+fn addIntOption(self: *Parser, name: []const u8) !void {
     try self.options.put(name, .{ .tag = .int });
 }
 
-pub fn addFloatOption(self: *Parser, name: []const u8) !void {
+fn addFloatOption(self: *Parser, name: []const u8) !void {
     try self.options.put(name, .{ .tag = .float });
 }
 
-pub fn addStringOption(self: *Parser, name: []const u8) !void {
+fn addStringOption(self: *Parser, name: []const u8) !void {
     try self.options.put(name, .{ .tag = .string });
 }
 

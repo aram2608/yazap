@@ -11,9 +11,9 @@ pub fn main() !void {
     var parser = yazap.ArgParser.init(allocator, args);
     defer parser.deinit();
 
-    try parser.addBoolOption("foo");
-    try parser.addBoolOption("bar");
-    try parser.addStringOption("baz");
+    try parser.addOption("foo", .boolean);
+    try parser.addOption("bar", .boolean);
+    try parser.addOption("baz", .string);
 
     var result = try parser.parse();
     defer result.deinit();

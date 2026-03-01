@@ -16,10 +16,10 @@ pub fn main() !void {
     var parser = yazap.ArgParser.init(allocator, args);
     defer parser.deinit();
 
-    try parser.addBoolOption("foo");
+    try parser.addOption("foo", .boolean);
 
     var result = try parser.parse();
     defer result.deinit();
 
-    if (result.getBool("foo")) foo() else bar();
+    if (result.getBool("foo")) |_| foo() else bar();
 }
