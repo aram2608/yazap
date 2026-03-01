@@ -2,9 +2,10 @@ const std = @import("std");
 const yazap = @import("yazap");
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    // var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    // defer _ = gpa.deinit();
+    // const allocator = gpa.allocator();
+    const allocator = std.heap.page_allocator;
 
     const args = try std.process.ArgIterator.initWithAllocator(allocator);
     var parser = yazap.ArgParser.init(allocator, args);
@@ -16,10 +17,6 @@ pub fn main() !void {
 
     var result = try parser.parse();
     defer result.deinit();
-
-    parser.dumpOptions();
-    parser.dumpUnknown();
-    result.dumpResults();
 
     const foo_val = result.getBool("foo") orelse false;
     std.debug.print("foo: {}\n", .{foo_val});
