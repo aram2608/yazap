@@ -6,7 +6,6 @@ const Option = @import("Option.zig");
 const Parser = @This();
 const OptionsMap = std.StringHashMap(Option);
 const startsWith = std.mem.startsWith;
-const ParseError = error{UnknownType};
 
 gpa: Allocator,
 args: ArgIterator,
@@ -28,15 +27,17 @@ pub fn deinit(self: *Parser) void {
     self.unknown_options.deinit(self.gpa);
 }
 
-pub fn addOption(self: *Parser, name: []const u8, comptime T: type) !void {
-    switch (@typeInfo(T)) {
-        .Int => try self.addIntOption(name),
-        .Float => try self.addFloatOption(name),
-        .Slice => try self.addStringOption(name),
-        .Bool => try self.addBoolOption(name),
-        else => return error.UnknownType,
-    }
-}
+/// TODO: Look into Type reification for custom `Options`.
+/// Need custom option and matching `Result`.
+// pub fn addOption(self: *Parser, name: []const u8, comptime T: type) !void {
+//     switch (@typeInfo(T)) {
+//         .int => try self.addIntOption(name),
+//         .float => try self.addFloatOption(name),
+//         .pointer => |p| if (p.size == .slice and p.child == u8) try self.addStringOption(name) else return error.UnknownType,
+//         .bool => try self.addBoolOption(name),
+//         else => return error.UnknownType,
+//     }
+// }
 
 pub fn addBoolOption(self: *Parser, name: []const u8) !void {
     try self.options.put(name, .{ .tag = .boolean });
@@ -54,6 +55,10 @@ pub fn addStringOption(self: *Parser, name: []const u8) !void {
     try self.options.put(name, .{ .tag = .string });
 }
 
+// pub fn addStringSliceOption(self: *Parser, name: []const u8, delim: []const u8) !void {
+//     try self.options.put(name, .{ .tag = .string_slice, .delim = delim });
+// }
+
 pub fn parse(self: *Parser) !ParseResult {
     if (self.parsed) return error.AlreadyParsed;
     self.parsed = true;
@@ -61,18 +66,13 @@ pub fn parse(self: *Parser) !ParseResult {
     // Need to jump past the name of the program first
     _ = self.args.next();
     while (self.args.next()) |arg| {
-        const key = if (startsWith(u8, arg, "--")) arg[2..] else if (startsWith(u8, arg, "-")) arg[1..] else arg;
+        const key = if (isOption(arg)) arg[2..] else arg;
         const parse_attempt: ?*Option = self.options.getPtr(key);
         if (parse_attempt) |option| {
             option.state = .seen;
             option.count += 1;
-            const result: ParseResult.Result = switch (option.tag) {
-                .boolean => .{ .boolean = true },
-                .int => .{ .int = try self.parseInt() },
-                .float => .{ .float = try self.parseFloat() },
-                .string => .{ .string = try self.parseString() },
-            };
-            try parse_result.results.put(key, result);
+            const value = try self.parsePayload(option);
+            try parse_result.results.put(key, .{ .value = value, .count = option.count });
         } else {
             try self.unknown_options.append(self.gpa, arg);
         }
@@ -81,8 +81,27 @@ pub fn parse(self: *Parser) !ParseResult {
     return parse_result;
 }
 
+fn parsePayload(self: *Parser, opt: *Option) !ParseResult.Result.Value {
+    return switch (opt.tag) {
+        .boolean => .{ .boolean = true },
+        .int => .{ .int = try self.parseInt() },
+        .float => .{ .float = try self.parseFloat() },
+        .string => .{ .string = try self.parseString() },
+        // .string_slice => .{ .string_slice = try self.parseStringSlice() },
+    };
+}
+
+/// TODO: Add option trimming so that --foo and -f are equivalent.
+fn isOption(arg: [:0]const u8) bool {
+    return if (startsWith(u8, arg, "--")) true else false;
+}
+
+// fn parseStringSlice(self:* Parser) ![][]const u8 {
+
+// }
+
 fn parseString(self: *Parser) ![]const u8 {
-    return self.args.next() orelse return error.TypeMismatch;
+    return self.args.next() orelse return error.MissingValue;
 }
 
 fn parseInt(self: *Parser) !i32 {

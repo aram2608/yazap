@@ -1,10 +1,6 @@
 const std = @import("std");
 const yazap = @import("yazap");
 
-pub fn foo() void {
-    std.debug.print("FOOOO\n", .{});
-}
-
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -23,11 +19,17 @@ pub fn main() !void {
 
     parser.dumpOptions();
     parser.dumpUnknown();
-
     result.dumpResults();
 
-    const foo_result = try result.expectBool("foo");
-    if (foo_result) {
-        foo();
+    const foo_val = result.getBool("foo") orelse false;
+    std.debug.print("foo: {}\n", .{foo_val});
+
+    const bar_present = result.isPresent("bar");
+    std.debug.print("bar present: {}\n", .{bar_present});
+
+    if (result.getString("baz")) |s| {
+        std.debug.print("baz: {s}\n", .{s});
+    } else {
+        std.debug.print("baz: not provided\n", .{});
     }
 }
