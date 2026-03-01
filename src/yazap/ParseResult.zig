@@ -27,56 +27,6 @@ pub fn dumpResults(self: *const ParseResult) void {
     }
 }
 
-/// Helper method to return an expected boolean `Result`.
-pub fn expectBool(self: *ParseResult, opt: []const u8) ResultError!bool {
-    const exists = self.results.get(opt);
-    if (exists) |result| {
-        switch (result.value) {
-            .boolean => return result.value.boolean,
-            else => return error.TypeMismatch,
-        }
-    } else {
-        return error.NotFound;
-    }
-}
-
-/// Helper method to return an expected int `Result`.
-pub fn expectInt(self: *ParseResult, opt: []const u8) ResultError!i32 {
-    const exists = self.results.get(opt);
-    if (exists) |result| {
-        switch (result.value) {
-            .int => return result.value.int,
-            else => return error.TypeMismatch,
-        }
-    } else {
-        return error.NotFound;
-    }
-}
-
-pub fn expectFloat(self: *ParseResult, opt: []const u8) ResultError!f32 {
-    const exists = self.results.get(opt);
-    if (exists) |result| {
-        switch (result.value) {
-            .float => return result.value.float,
-            else => return error.TypeMismatch,
-        }
-    } else {
-        return error.NotFound;
-    }
-}
-
-pub fn expectString(self: *ParseResult, opt: []const u8) ResultError![]const u8 {
-    const exists = self.results.get(opt);
-    if (exists) |result| {
-        switch (result.value) {
-            .string => return result.value.string,
-            else => return error.TypeMismatch,
-        }
-    } else {
-        return error.NotFound;
-    }
-}
-
 pub fn getBool(self: *const ParseResult, opt: []const u8) ?bool {
     const result = self.results.get(opt) orelse return null;
     return switch (result.value) {
