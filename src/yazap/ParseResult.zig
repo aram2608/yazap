@@ -1,18 +1,27 @@
 const std = @import("std");
 const ResultMap = std.StringHashMap(Result);
 const Allocator = std.mem.Allocator;
+const Option = @import("Option.zig");
 const ParseResult = @This();
-const ResultError = error{ NotFound, TypeMismatch };
 
+gpa: Allocator,
 results: ResultMap,
 
 pub fn init(gpa: Allocator) ParseResult {
     return .{
+        .gpa = gpa,
         .results = ResultMap.init(gpa),
     };
 }
 
 pub fn deinit(self: *ParseResult) void {
+    var iter = self.results.valueIterator();
+    while (iter.next()) |result| {
+        switch (result.value) {
+            .string_slice => |slice| self.gpa.free(slice),
+            else => {},
+        }
+    }
     self.results.deinit();
 }
 
@@ -59,6 +68,14 @@ pub fn getString(self: *const ParseResult, opt: []const u8) ?[]const u8 {
     };
 }
 
+pub fn getStringSlice(self: *const ParseResult, opt: []const u8) ?[][]const u8 {
+    const result = self.results.get(opt) orelse return null;
+    return switch (result.value) {
+        .string_slice => |v| v,
+        else => null,
+    };
+}
+
 pub fn isPresent(self: *const ParseResult, opt: []const u8) bool {
     const result = self.results.get(opt) orelse return false;
     return result.count > 0;
@@ -78,6 +95,6 @@ pub const Result = struct {
         int: i32,
         float: f32,
         string: []const u8,
-        // string_slice: [][]const u8,
+        string_slice: [][]const u8,
     };
 };

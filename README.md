@@ -15,7 +15,7 @@ fn main() !void {
     const allocator = std.heap.page_allocator;
 
     const args = try std.process.ArgIterator.initWithAllocator(allocator);
-    var parser = yazap.ArgParser.init(allocator, args);
+    var parser = try yazap.ArgParser.init(allocator, args);
     defer parser.deinit();
 
     try parser.addOption("foo", .boolean);
@@ -29,3 +29,7 @@ fn main() !void {
 
 The `get` methods returns an `?ExpectedValue` so the optional needs to 
 be unwrapped. How you choose to go about this is up to you.
+
+The `ArgParser` needs to be initialized with a try since the arguments are passed
+into a flat heap-allocated `[]const u8` buffer. While the `ArgIterator` from the
+standard library is pretty nice, it does not allow for more complex parsing.

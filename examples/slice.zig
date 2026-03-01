@@ -1,14 +1,6 @@
 const std = @import("std");
 const yazap = @import("yazap");
 
-fn foo() void {
-    std.debug.print("FOOOOOOOOOOO\n", .{});
-}
-
-fn bar() void {
-    std.debug.print("No foo was provided and I am sad\n", .{});
-}
-
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
 
@@ -17,10 +9,16 @@ pub fn main() !void {
     var parser = try yazap.ArgParser.init(allocator, args);
     defer parser.deinit();
 
-    try parser.addOption("foo", .boolean);
+    try parser.addOption("buzz", .string_slice);
 
     var result = try parser.parse();
     defer result.deinit();
 
-    if (result.getBool("foo")) |_| foo() else bar();
+    if (result.getStringSlice("buzz")) |slice| {
+        for (slice) |s| {
+            std.debug.print("{s}\n", .{s});
+        }
+    } else {
+        std.debug.print("buzz: not provided\n", .{});
+    }
 }

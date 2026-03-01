@@ -2,18 +2,19 @@ const std = @import("std");
 const yazap = @import("yazap");
 
 pub fn main() !void {
-    // var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    // defer _ = gpa.deinit();
-    // const allocator = gpa.allocator();
-    const allocator = std.heap.page_allocator;
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
 
-    const args = try std.process.ArgIterator.initWithAllocator(allocator);
-    var parser = yazap.ArgParser.init(allocator, args);
+    var args = try std.process.ArgIterator.initWithAllocator(allocator);
+    defer args.deinit();
+    var parser = try yazap.ArgParser.init(allocator, args);
     defer parser.deinit();
 
     try parser.addOption("foo", .boolean);
     try parser.addOption("bar", .boolean);
     try parser.addOption("baz", .string);
+    try parser.addOption("buzz", .string_slice);
 
     var result = try parser.parse();
     defer result.deinit();
@@ -28,5 +29,15 @@ pub fn main() !void {
         std.debug.print("baz: {s}\n", .{s});
     } else {
         std.debug.print("baz: not provided\n", .{});
+    }
+
+    if (result.getStringSlice("buzz")) |slice| {
+        std.debug.print("buzz:", .{});
+        for (slice) |s| {
+            std.debug.print(" {s}", .{s});
+        }
+        std.debug.print("\n", .{});
+    } else {
+        std.debug.print("buzz: not provided\n", .{});
     }
 }
