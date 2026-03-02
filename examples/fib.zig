@@ -24,7 +24,7 @@ pub fn main() !void {
     var parser = try yazap.ArgParser.init(allocator, args);
     defer parser.deinit();
 
-    try parser.addOption("foo", .int);
+    try parser.addOption("foo", .int, "The fibonacci index to compute");
 
     var result = try parser.parse();
     defer result.deinit();

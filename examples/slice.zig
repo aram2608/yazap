@@ -9,7 +9,7 @@ pub fn main() !void {
     var parser = try yazap.ArgParser.init(allocator, args);
     defer parser.deinit();
 
-    try parser.addOption("buzz", .string_slice);
+    try parser.addOption("buzz", .string_slice, "Words to print");
 
     var result = try parser.parse();
     defer result.deinit();

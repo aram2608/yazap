@@ -11,16 +11,16 @@ options: OptionsMap,
 buffer: []const u8,
 start: usize = 0,
 current: usize = 0,
+program_name: []const u8 = "",
+option_order: std.ArrayList([]const u8) = .empty,
 unknown_options: std.ArrayList([]const u8) = .empty,
 parsed: bool = false,
 
-// TODO: Store the program name so a help message can be added for each argument
-// With the program name
 pub fn init(gpa: Allocator, args: ArgIterator) !Parser {
     var temp: [4096]u8 = undefined;
     var pos: usize = 0;
     var temp_args = args;
-    _ = temp_args.skip(); // skip argv[0]
+    const name = temp_args.next().?; // argv[0]
     while (temp_args.next()) |arg| {
         if (pos + arg.len + 1 > temp.len) @panic("argument buffer overflow");
         @memcpy(temp[pos..][0..arg.len], arg);
@@ -29,6 +29,7 @@ pub fn init(gpa: Allocator, args: ArgIterator) !Parser {
     }
     return .{
         .gpa = gpa,
+        .program_name = try gpa.dupe(u8, name),
         .buffer = try gpa.dupe(u8, temp[0..pos]),
         .options = OptionsMap.init(gpa),
     };
@@ -36,53 +37,20 @@ pub fn init(gpa: Allocator, args: ArgIterator) !Parser {
 
 pub fn deinit(self: *Parser) void {
     self.gpa.free(self.buffer);
+    self.gpa.free(self.program_name);
+    self.option_order.deinit(self.gpa);
     self.options.deinit();
     self.unknown_options.deinit(self.gpa);
 }
 
-/// TODO: Look into Type reification for custom `Options`.
-/// Need custom option and matching `Result`.
-// pub fn addOption(self: *Parser, name: []const u8, comptime T: type) !void {
-//     switch (@typeInfo(T)) {
-//         .int => try self.addIntOption(name),
-//         .float => try self.addFloatOption(name),
-//         .pointer => |p| if (p.size == .slice and p.child == u8) try self.addStringOption(name) else return error.UnknownType,
-//         .bool => try self.addBoolOption(name),
-//         else => return error.UnknownType,
-//     }
-// }
-//
-
-pub fn addOption(self: *Parser, name: []const u8, tag: Option.Tag) !void {
-    try switch (tag) {
-        .boolean => self.addBoolOption(name),
-        .float => self.addFloatOption(name),
-        .int => self.addIntOption(name),
-        .string => self.addStringOption(name),
-        .string_slice => self.addStringSliceOption(name),
-    };
-}
-
-// Internal helpers //
-
-fn addBoolOption(self: *Parser, name: []const u8) !void {
-    try self.options.put(name, .{ .tag = .boolean });
-}
-
-fn addIntOption(self: *Parser, name: []const u8) !void {
-    try self.options.put(name, .{ .tag = .int });
-}
-
-fn addFloatOption(self: *Parser, name: []const u8) !void {
-    try self.options.put(name, .{ .tag = .float });
-}
-
-fn addStringOption(self: *Parser, name: []const u8) !void {
-    try self.options.put(name, .{ .tag = .string });
-}
-
-fn addStringSliceOption(self: *Parser, name: []const u8) !void {
-    try self.options.put(name, .{ .tag = .string_slice });
+pub fn addOption(
+    self: *Parser,
+    name: []const u8,
+    tag: Option.Tag,
+    help: []const u8,
+) !void {
+    try self.option_order.append(self.gpa, name);
+    try self.options.put(name, .{ .tag = tag, .help = help });
 }
 
 pub fn parse(self: *Parser) !ParseResult {
@@ -100,6 +68,11 @@ pub fn parse(self: *Parser) !ParseResult {
             '-' => self.parseOption(),
             else => break,
         };
+        if (std.mem.eql(u8, key, "help")) {
+            parse_result.had_help = true;
+            continue;
+        }
+
         const parse_attempt = self.options.getPtr(key);
         if (parse_attempt) |option| {
             option.count += 1;
@@ -116,8 +89,58 @@ pub fn parse(self: *Parser) !ParseResult {
             try self.unknown_options.append(self.gpa, key);
         }
     }
+    parse_result.help_message = try self.buildHelpMessage();
 
     return parse_result;
+}
+
+fn buildHelpMessage(self: *Parser) ![]u8 {
+    const prefix = "--";
+    const col_gap: usize = 2;
+
+    var buff = std.Io.Writer.Allocating.init(self.gpa);
+    errdefer buff.deinit();
+
+    try buff.writer.print("Usage: {s} [OPTIONS]\nOptions:\n", .{self.program_name});
+
+    // Seed with "--help" so it's always included in alignment
+    var max_left: usize = prefix.len + "help".len;
+    for (self.option_order.items) |name| {
+        const opt = self.options.get(name).?;
+        const hint = typeHint(opt.tag);
+        const left = prefix.len + name.len + if (hint.len > 0) 1 + hint.len else 0;
+        if (left > max_left) max_left = left;
+    }
+
+    for (self.option_order.items) |name| {
+        const opt = self.options.get(name).?;
+        const hint = typeHint(opt.tag);
+        var left: usize = prefix.len + name.len;
+        try buff.writer.print("{s}{s}", .{ prefix, name });
+        if (hint.len > 0) {
+            try buff.writer.print(" {s}", .{hint});
+            left += 1 + hint.len;
+        }
+        try buff.writer.splatByteAll(' ', max_left - left + col_gap);
+        try buff.writer.print("{s}\n", .{opt.help});
+    }
+
+    const help_left = prefix.len + "help".len;
+    try buff.writer.print("{s}help", .{prefix});
+    try buff.writer.splatByteAll(' ', max_left - help_left + col_gap);
+    try buff.writer.print("Print this help message\n", .{});
+
+    return buff.toOwnedSlice();
+}
+
+fn typeHint(tag: Option.Tag) []const u8 {
+    return switch (tag) {
+        .boolean => "",
+        .int => "<int>",
+        .float => "<float>",
+        .string => "<string>",
+        .string_slice => "<string...>",
+    };
 }
 
 fn advance(self: *Parser) u8 {

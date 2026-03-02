@@ -6,6 +6,8 @@ const ParseResult = @This();
 
 gpa: Allocator,
 results: ResultMap,
+had_help: bool = false,
+help_message: []const u8 = undefined,
 
 pub fn init(gpa: Allocator) ParseResult {
     return .{
@@ -22,6 +24,7 @@ pub fn deinit(self: *ParseResult) void {
             else => {},
         }
     }
+    self.gpa.free(self.help_message);
     self.results.deinit();
 }
 
@@ -76,6 +79,10 @@ pub fn getStringSlice(self: *const ParseResult, opt: []const u8) ?[][]const u8 {
     };
 }
 
+pub fn printHelp(self: *const ParseResult) void {
+    std.fs.File.stdout().writeAll(self.help_message) catch {};
+}
+
 pub fn isPresent(self: *const ParseResult, opt: []const u8) bool {
     const result = self.results.get(opt) orelse return false;
     return result.count > 0;
@@ -84,6 +91,10 @@ pub fn isPresent(self: *const ParseResult, opt: []const u8) bool {
 pub fn getCount(self: *const ParseResult, opt: []const u8) u32 {
     const result = self.results.get(opt) orelse return 0;
     return result.count;
+}
+
+pub fn hadHelp(self: *const ParseResult) bool {
+    return self.had_help;
 }
 
 pub const Result = struct {

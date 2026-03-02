@@ -11,13 +11,18 @@ pub fn main() !void {
     var parser = try yazap.ArgParser.init(allocator, args);
     defer parser.deinit();
 
-    try parser.addOption("foo", .boolean);
-    try parser.addOption("bar", .boolean);
-    try parser.addOption("baz", .string);
-    try parser.addOption("buzz", .string_slice);
+    try parser.addOption("foo", .boolean, "Foo man");
+    try parser.addOption("bar", .boolean, "Bar bro");
+    try parser.addOption("baz", .string, "Baz baby");
+    try parser.addOption("buzz", .string_slice, "Buzz buzz");
 
     var result = try parser.parse();
     defer result.deinit();
+
+    if (result.hadHelp()) {
+        result.printHelp();
+        return;
+    }
 
     const foo_val = result.getBool("foo") orelse false;
     std.debug.print("foo: {}\n", .{foo_val});

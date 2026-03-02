@@ -17,7 +17,7 @@ pub fn main() !void {
     var parser = try yazap.ArgParser.init(allocator, args);
     defer parser.deinit();
 
-    try parser.addOption("foo", .boolean);
+    try parser.addOption("foo", .boolean, "Run foo");
 
     var result = try parser.parse();
     defer result.deinit();

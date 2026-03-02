@@ -11,14 +11,13 @@ zig fetch --save "git+https://github.com/aram2608/yazap#main"
 This adds yazap to your `build.zig.zon`. Then wire it into your `build.zig`:
 
 ```zig
-const yazap_dep = b.dependency("yazap", .{
+const yazap = b.dependency("yazap", .{
     .target = target,
     .optimize = optimize,
 });
-const yazap_mod = yazap_dep.module("yazap");
 
 // Add the import to your executable or library module
-exe.root_module.addImport("yazap", yazap_mod);
+exe.root_module.addImport("yazap", yazap.module("yazap"));
 ```
 
 ## Usage
@@ -30,17 +29,23 @@ const yazap = @import("yazap");
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
 
-    const args = try std.process.ArgIterator.initWithAllocator(allocator);
+    var args = try std.process.ArgIterator.initWithAllocator(allocator);
+    defer args.deinit();
     var parser = try yazap.ArgParser.init(allocator, args);
     defer parser.deinit();
 
-    try parser.addOption("verbose", .boolean);
-    try parser.addOption("count", .int);
-    try parser.addOption("name", .string);
-    try parser.addOption("tags", .string_slice);
+    try parser.addOption("verbose", .boolean, "Enable verbose output");
+    try parser.addOption("count", .int, "Number of iterations");
+    try parser.addOption("name", .string, "Your name");
+    try parser.addOption("tags", .string_slice, "List of tags");
 
     var result = try parser.parse();
     defer result.deinit();
+
+    if (result.had_help) {
+        result.printHelp();
+        return;
+    }
 
     if (result.getBool("verbose")) |v| {
         std.debug.print("verbose: {}\n", .{v});
@@ -61,6 +66,7 @@ Run it:
 
 ```sh
 ./myapp --verbose --count 3 --name alice --tags foo bar baz
+./myapp --help
 ```
 
 ## API
@@ -71,7 +77,7 @@ Run it:
 |---|---|
 | `init(allocator, args) !ArgParser` | Create a parser from a `std.process.ArgIterator` |
 | `deinit()` | Free all resources |
-| `addOption(name, tag) !void` | Register an option by name and type tag |
+| `addOption(name, tag, help) !void` | Register an option by name, type tag, and help text |
 | `parse() !ParseResult` | Parse arguments; errors if called more than once |
 
 Option tags: `.boolean`, `.int`, `.float`, `.string`, `.string_slice`
@@ -87,6 +93,9 @@ Option tags: `.boolean`, `.int`, `.float`, `.string`, `.string_slice`
 | `getStringSlice(name)` | `?[][]const u8` | Get a list of strings |
 | `isPresent(name)` | `bool` | Check if an option was provided |
 | `getCount(name)` | `u32` | Number of times the option appeared |
+| `printHelp()` | | Print the generated help message to stdout |
 | `deinit()` | | Free result resources |
+
+`had_help bool` — set to `true` if `--help` was passed. Check this before reading results and call `printHelp()` to print the auto-generated usage message.
 
 All `get*` methods return `null` if the option was not provided or the type does not match.
