@@ -1,12 +1,12 @@
 const std = @import("std");
 const chizel = @import("chizel");
 
-fn fibonacci(range: i32) i32 {
+fn fibonacci(range: i64) i64 {
     if (range <= 1) return range;
 
-    var a: i32 = 0;
-    var b: i32 = 1;
-    var c: i32 = 0;
+    var a: i64 = 0;
+    var b: i64 = 1;
+    var c: i64 = 0;
     for (1..@intCast(range)) |_| {
         c = a + b;
         a = b;
@@ -24,7 +24,12 @@ pub fn main() !void {
     var parser = try chizel.ArgParser.init(allocator, args);
     defer parser.deinit();
 
-    try parser.addOption("foo", .int, "The fibonacci index to compute");
+    try parser.addOption(.{
+        .name = "foo",
+        .tag = .int,
+        .help = "The fibonacci index to compute",
+        .required = true,
+    });
 
     var result = try parser.parse();
     defer result.deinit();

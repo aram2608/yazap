@@ -17,10 +17,10 @@ pub fn main() !void {
     var parser = try chizel.ArgParser.init(allocator, args);
     defer parser.deinit();
 
-    try parser.addOption("foo", .boolean, "Run foo");
+    try parser.addOption(.{ .name = "foo", .tag = .boolean, .help = "Run foo" });
 
     var result = try parser.parse();
     defer result.deinit();
 
-    if (result.getBool("foo")) |_| foo() else bar();
+    if (result.isPresent("foo")) foo() else bar();
 }

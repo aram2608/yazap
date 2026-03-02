@@ -11,21 +11,28 @@ pub fn main() !void {
     var parser = try chizel.ArgParser.init(allocator, args);
     defer parser.deinit();
 
-    try parser.addOption("foo", .boolean, "Foo man");
-    try parser.addOption("bar", .boolean, "Bar bro");
-    try parser.addOption("baz", .string, "Baz baby");
-    try parser.addOption("buzz", .string_slice, "Buzz buzz");
+    try parser.addOption(.{
+        .name = "foo",
+        .tag = .boolean,
+        .short = 'f',
+        .default = .{ .boolean = true },
+        .required = true,
+        .help = "Foo man",
+    });
+    try parser.addOption(.{ .name = "bar", .tag = .boolean, .help = "Bar bro" });
+    try parser.addOption(.{ .name = "baz", .tag = .string, .help = "Baz baby" });
+    try parser.addOption(.{ .name = "buzz", .tag = .string_slice, .help = "Buzz buzz" });
 
     var result = try parser.parse();
     defer result.deinit();
 
     if (result.hadHelp()) {
-        result.printHelp();
+        try result.printHelp();
         return;
     }
 
-    const foo_val = result.getBool("foo") orelse false;
-    std.debug.print("foo: {}\n", .{foo_val});
+    const foo_present = result.isPresent("foo");
+    std.debug.print("foo: {}\n", .{foo_present});
 
     const bar_present = result.isPresent("bar");
     std.debug.print("bar present: {}\n", .{bar_present});
@@ -44,5 +51,12 @@ pub fn main() !void {
         std.debug.print("\n", .{});
     } else {
         std.debug.print("buzz: not provided\n", .{});
+    }
+
+    const positionals = result.getPositionals();
+    if (positionals.len > 0) {
+        std.debug.print("positionals:", .{});
+        for (positionals) |p| std.debug.print(" {s}", .{p});
+        std.debug.print("\n", .{});
     }
 }

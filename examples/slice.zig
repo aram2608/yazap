@@ -9,7 +9,7 @@ pub fn main() !void {
     var parser = try chizel.ArgParser.init(allocator, args);
     defer parser.deinit();
 
-    try parser.addOption("buzz", .string_slice, "Words to print");
+    try parser.addOption(.{ .name = "buzz", .tag = .string_slice, .help = "Words to print" });
 
     var result = try parser.parse();
     defer result.deinit();
