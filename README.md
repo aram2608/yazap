@@ -1,11 +1,11 @@
-# yazap
+# chizel
 
-Yet Another Zig Argument Parser. A simple CLI argument parser for Zig supporting `bool`, `i32`, `f32`, `[]const u8`, and `[][]const u8` option types.
+Chizel. A simple CLI argument parser for Zig supporting `bool`, `i32`, `f32`, `[]const u8`, and `[][]const u8` option types.
 
 ## Fetching as a dependency
 
 ```sh
-zig fetch --save "git+https://github.com/aram2608/yazap#main"
+zig fetch --save "git+https://github.com/aram2608/chizel#main"
 ```
 
 This adds yazap to your `build.zig.zon`. Then wire it into your `build.zig`:
