@@ -1,3 +1,25 @@
+//! ArgParser — registers options and parses `argv` into a `ParseResult`.
+//!
+//! ## Typical usage
+//!
+//! ```zig
+//! var args = try std.process.ArgIterator.initWithAllocator(allocator);
+//! defer args.deinit();
+//!
+//! var parser = try ArgParser.init(allocator, args);
+//! defer parser.deinit();
+//!
+//! try parser.addOption(.{ .name = "verbose", .tag = .boolean, .short = 'v' });
+//! try parser.addOption(.{ .name = "port",    .tag = .int,     .default = .{ .int = 8080 } });
+//!
+//! var result = try parser.parse();
+//! defer result.deinit();
+//! ```
+//!
+//! Call `parse()` exactly once.  `deinit()` must be called *after* the
+//! corresponding `ParseResult.deinit()` because `string` and `string_slice`
+//! values in the result point into the parser's internal buffer.
+
 const std = @import("std");
 const ArgIterator = std.process.ArgIterator;
 const Allocator = std.mem.Allocator;
@@ -5,6 +27,12 @@ const ParseResult = @import("ParseResult.zig");
 const Option = @import("Option.zig");
 const Parser = @This();
 const OptionsMap = std.StringHashMap(Option);
+const startsWith = std.mem.startsWith;
+
+const NegationState = enum {
+    none,
+    negate,
+};
 
 gpa: Allocator,
 options: OptionsMap,
@@ -16,11 +44,21 @@ program_name: []const u8 = "",
 option_order: std.ArrayList([]const u8) = .empty,
 unknown_options: std.ArrayList([]const u8) = .empty,
 parsed: bool = false,
+negate: NegationState = .none,
 
 /// Create a parser from a `std.process.ArgIterator`.
-/// Consumes `argv[0]` as the program name and joins remaining arguments into
-/// an internal buffer (max 4096 bytes total).
-/// Returns `error.ArgumentBufferOverflow` if the limit is exceeded.
+///
+/// `args` is taken by value and fully consumed: `argv[0]` is stored as the
+/// program name, and the remaining tokens are joined into a single internal
+/// buffer separated by spaces.  Do not call `args.next()` after passing it
+/// here; the iterator is exhausted.  Continue to call `args.deinit()` via
+/// `defer` in the caller — it is safe to deinit an exhausted iterator.
+///
+/// The caller must keep `gpa` alive for the lifetime of both this parser and
+/// any `ParseResult` it produces.
+///
+/// Returns `error.ArgumentBufferOverflow` when the joined argument string
+/// (all tokens plus one separator byte per token) exceeds 4096 bytes.
 pub fn init(gpa: Allocator, args: ArgIterator) !Parser {
     var temp: [4096]u8 = undefined;
     var pos: usize = 0;
@@ -42,8 +80,22 @@ pub fn init(gpa: Allocator, args: ArgIterator) !Parser {
 }
 
 /// Free all resources owned by the parser.
-/// Any `string` or `string_slice` values held by a `ParseResult` produced by
-/// this parser become invalid after this call.
+///
+/// Must be called *after* `ParseResult.deinit()` for any result produced by
+/// this parser, because `string` and `string_slice` values in the result are
+/// slices into the parser's internal buffer.  Freeing the parser first leaves
+/// those slices dangling.
+///
+/// The typical pattern using `defer` is safe by default because `defer`
+/// unwinds in reverse order:
+///
+/// ```zig
+/// var parser = try ArgParser.init(allocator, args);
+/// defer parser.deinit();        // deferred first, runs last
+///
+/// var result = try parser.parse();
+/// defer result.deinit();        // deferred second, runs first ✓
+/// ```
 pub fn deinit(self: *Parser) void {
     self.gpa.free(self.buffer);
     self.gpa.free(self.program_name);
@@ -53,17 +105,32 @@ pub fn deinit(self: *Parser) void {
     self.short_map.deinit();
 }
 
-/// Register a command-line option.
+/// Register a command-line option before calling `parse()`.
+///
+/// Options are printed in registration order by `printHelp()`.  Call
+/// `addOption` for every flag your program accepts, then call `parse()` once.
+///
+/// `config.name` becomes the long flag (`--name`).  `config.short`, when set,
+/// provides a single-character alias (`-c`).  See `Option.Config` for the full
+/// set of fields.
 ///
 /// Errors:
-/// - `error.ReservedOptionName`             — `"help"` is always built-in.
-/// - `error.DuplicateOption`                — the name was already registered.
-/// - `error.StringSliceDefaultNotSupported` — use `getStringSlice() orelse &.{...}` instead.
+/// - `error.ReservedOptionName`             — `"help"` is built-in; register it and `parse()` will error.
+/// - `error.DuplicateOption`                — `config.name` was already registered.
+/// - `error.StringSliceDefaultNotSupported` — defaults for `.string_slice` options are not supported;
+///                                            use `getStringSlice("x") orelse &.{...}` at the call site.
 pub fn addOption(self: *Parser, config: Option.Config) !void {
     if (std.mem.eql(u8, config.name, "help")) return error.ReservedOptionName;
+
     if (self.options.contains(config.name)) return error.DuplicateOption;
     if (config.default) |d| {
         if (d == .string_slice) return error.StringSliceDefaultNotSupported;
+    }
+
+    if (config.short) |s| {
+        if (!std.ascii.isAlphanumeric(s)) return error.InvalidShortFlag;
+        if (s == 'h') return error.ReservedShortFlag;
+        try self.short_map.put(s, config.name);
     }
 
     try self.option_order.append(self.gpa, config.name);
@@ -76,22 +143,37 @@ pub fn addOption(self: *Parser, config: Option.Config) !void {
         .validate = config.validate,
         .default = config.default,
     });
-    if (config.short) |s| {
-        try self.short_map.put(s, config.name);
-    }
 }
 
 /// Parse the argument buffer and return a `ParseResult`.
-/// May only be called once per parser instance.
 ///
-/// Resolution order for each option: CLI flag › environment variable › default.
+/// May only be called once.  Register all options with `addOption` first.
 ///
-/// Errors:
-/// - `error.AlreadyParsed`         — called more than once.
-/// - `error.MissingValue`          — a non-boolean option had no value after it.
+/// ## Value resolution order
+///
+/// For each option, the first source that provides a value wins:
+///
+///   1. CLI flag (`--name value`)
+///   2. Environment variable (`Option.Config.env`)
+///   3. Static default (`Option.Config.default`)
+///
+/// `required` is satisfied only by a CLI flag or an env-var fallback.
+/// A `default` alone does not satisfy `required`.
+///
+/// ## `--help` behaviour
+///
+/// When `--help` (or `-h`) appears anywhere in argv, `parse()` still succeeds
+/// and returns a result where `hadHelp()` is `true`.  Required-option checks
+/// are skipped so that the caller can always print help without supplying every
+/// flag.  Check `hadHelp()` before reading any other values.
+///
+/// ## Errors
+///
+/// - `error.AlreadyParsed`         — `parse()` was called more than once on this parser.
+/// - `error.MissingValue`          — a non-boolean option appeared without a following value.
 /// - `error.ValidationFailed`      — a `validate` callback returned `false`.
 /// - `error.MissingRequiredOption` — a `required` option was absent from CLI and env.
-///                                   Skipped when `--help` was passed.
+///                                   Not returned when `--help` was passed.
 pub fn parse(self: *Parser) !ParseResult {
     if (self.parsed) return error.AlreadyParsed;
     self.parsed = true;
@@ -120,8 +202,16 @@ pub fn parse(self: *Parser) !ParseResult {
                 continue;
             }
 
+            const is_negated = startsWith(u8, key, "no-");
+            if (is_negated) key = key[3..];
+
             const parse_attempt = self.options.getPtr(key);
             if (parse_attempt) |option| {
+                if (is_negated and option.tag != .boolean) {
+                    try self.unknown_options.append(self.gpa, key);
+                    continue;
+                }
+                if (is_negated) self.negate = .negate;
                 option.count += 1;
                 // Non-boolean options require a space then their value.
                 if (option.tag != .boolean) {
@@ -213,12 +303,21 @@ fn parseOption(self: *Parser) []const u8 {
 
 fn parsePayload(self: *Parser, tag: Option.Tag) !Option.Value {
     return switch (tag) {
-        .boolean => .{ .boolean = true },
+        .boolean => .{ .boolean = self.parseBool() },
         .int => .{ .int = try self.parseInt() },
         .float => .{ .float = try self.parseFloat() },
         .string => .{ .string = try self.parseString() },
         .string_slice => .{ .string_slice = try self.parseStringSlice() },
     };
+}
+
+fn parseBool(self: *Parser) bool {
+    const result = switch (self.negate) {
+        .negate => false,
+        .none => true,
+    };
+    self.negate = .none;
+    return result;
 }
 
 fn parseString(self: *Parser) ![]const u8 {
@@ -366,6 +465,38 @@ fn buildHelpMessage(self: *Parser) ![]u8 {
     return buff.toOwnedSlice();
 }
 
+pub fn createAutoCompletion(self: *Parser, target: AutoCompTarget) !void {
+    try switch (target) {
+        .fish => self.createFishCompletion(),
+        else => unreachable,
+    };
+}
+
+fn createFishCompletion(self: *Parser) !void {
+    var buff = std.Io.Writer.Allocating.init(self.gpa);
+    defer buff.deinit();
+
+    try buff.writer.print("~/.config/fish/completions/{s}.fish\n", .{self.program_name});
+
+    for (self.option_order.items) |name| {
+        const opt = self.options.get(name).?;
+
+        if (opt.short) |s| {
+            try buff.writer.print("complete -c {s} -s {c} -l {s}  -d \"{s}\"\n", .{ self.program_name, s, name, opt.help });
+        } else {
+            try buff.writer.print("complete -c {s} -l {s}  -d \"{s}\"\n", .{ self.program_name, name, opt.help });
+        }
+    }
+
+    var cwd = std.fs.cwd();
+    var file = try cwd.createFile("text.fish", .{});
+    defer file.close();
+
+    const temp = try buff.toOwnedSlice();
+    _ = try file.write(temp);
+    self.gpa.free(temp);
+}
+
 fn typeHint(tag: Option.Tag) []const u8 {
     return switch (tag) {
         .boolean => "",
@@ -376,17 +507,33 @@ fn typeHint(tag: Option.Tag) []const u8 {
     };
 }
 
-/// Write unknown (unregistered) option names to `writer`.
+/// Write each unrecognised flag name to `writer`, one per line.
+///
+/// An option is "unknown" when its name was not registered with `addOption`.
+/// Unknown options are silently collected rather than causing `parse()` to
+/// error, so call this after `parse()` to detect typos or unsupported flags.
+///
+/// Output format: `Unknown opt: <name>\n`
 pub fn dumpUnknown(self: *const Parser, writer: anytype) !void {
     for (self.unknown_options.items) |name| {
         try writer.print("Unknown opt: {s}\n", .{name});
     }
 }
 
-/// Write registered option names and their tags to `writer`.
+/// Write each registered option name and its value type to `writer`, one per line.
+///
+/// Intended for debugging.  Options are printed in registration order.
+///
+/// Output format: `Key: <name> || Tag: <tag>\n`
 pub fn dumpOptions(self: *const Parser, writer: anytype) !void {
-    var iter = self.options.iterator();
-    while (iter.next()) |opt| {
-        try writer.print("Key: {s} || Tag: {s}\n", .{ opt.key_ptr.*, @tagName(opt.value_ptr.tag) });
+    for (self.option_order.items) |name| {
+        const opt = self.options.get(name).?;
+        try writer.print("Key: {s} || Tag: {s}\n", .{ name, @tagName(opt.tag) });
     }
 }
+
+pub const AutoCompTarget = enum {
+    bash,
+    fish,
+    zsh,
+};

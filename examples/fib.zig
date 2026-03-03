@@ -25,14 +25,24 @@ pub fn main() !void {
     defer parser.deinit();
 
     try parser.addOption(.{
-        .name = "foo",
+        .name = "fib",
         .tag = .int,
         .help = "The fibonacci index to compute",
         .required = true,
+        .validate = struct {
+            fn check(v: chizel.Option.Value) bool {
+                return v.int >= 0 and v.int <= 92;
+            }
+        }.check,
     });
 
     var result = try parser.parse();
     defer result.deinit();
+
+    if (result.hadHelp()) {
+        try result.printHelp();
+        return;
+    }
 
     if (result.getInt("foo")) |num| {
         const fib = fibonacci(num);

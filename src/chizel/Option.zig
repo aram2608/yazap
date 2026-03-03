@@ -1,3 +1,9 @@
+//! Option — the internal representation of a registered CLI option.
+//!
+//! Callers never construct this type directly.  Use `Option.Config` with
+//! `ArgParser.addOption` to register options, and `Option.Value` / `Option.Tag`
+//! when writing `validate` callbacks or inspecting parsed results.
+
 const std = @import("std");
 
 tag: Tag,

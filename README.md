@@ -107,7 +107,7 @@ chizel.Option.Config{
 }
 ```
 
-**Priority order:** CLI flag › environment variable › default value.
+**Priority order:** `--flag` › `--no-flag` › environment variable › default value.
 
 **`required`** is satisfied by a CLI flag or an env-var fallback; a `default` alone does not count.
 
@@ -135,7 +135,7 @@ chizel.Option.Config{
 
 | Function | Return | Description |
 |---|---|---|
-| `isPresent(name)` | `bool` | `true` if the flag appeared on CLI or was set via env var |
+| `isPresent(name)` | `bool` | For `.boolean` options: the effective boolean value. For all others: `true` if the flag appeared on CLI or was set via env var |
 | `getInt(name)` | `?i64` | Parsed integer value |
 | `getFloat(name)` | `?f64` | Parsed float value |
 | `getString(name)` | `?[]const u8` | Parsed string value |
@@ -154,11 +154,26 @@ All `get*` methods return `null` when the option was absent and had no default.
 
 ## Boolean flags
 
-Boolean options are presence flags; there is no `--verbose false` syntax. Use `isPresent` to test them:
+Boolean options are presence flags — passing `--verbose` sets the value to `true`. Every boolean option also has an implicit `--no-<name>` counterpart that sets it to `false`, which is useful for overriding an environment variable or a default:
+
+```sh
+./myapp --verbose          # verbose = true
+./myapp --no-verbose       # verbose = false
+```
+
+Use `isPresent` to read the effective value:
 
 ```zig
 if (result.isPresent("verbose")) { ... }
 ```
+
+Resolution order for boolean options:
+
+```
+--flag  >  --no-flag  >  env var  >  default
+```
+
+`--no-<name>` is only recognised for options registered with `.tag = .boolean`; using it on any other type treats it as an unknown option.
 
 ## Short flags
 
