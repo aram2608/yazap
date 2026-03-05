@@ -234,7 +234,7 @@ try parser.addOption(.{
 
 ## ZiggyParse
 
-A lighter-weight alternative to `ArgParser` for simple use cases. Define your CLI options as a plain Zig struct and ZiggyParse handles the rest — all config lives in the struct, no runtime setup required.
+A lighter-weight alternative to `ArgParser` for simple use cases. Define your CLI options as a plain Zig struct and ZiggyParse handles the rest, all config lives in the struct, no runtime setup required.
 
 ```zig
 const std = @import("std");
@@ -303,7 +303,7 @@ pub fn main() !void {
 | `f*`                  | Parses the next token as a float                       |
 | `?T`                  | Parses as `T` when the flag is present, else `null`    |
 
-Every field must have a default value. For logically required fields use `?T = null` — the type system then forces the caller to handle the missing case.
+Every field must have a default value. For logically required fields use `?T = null`, the type system then forces the caller to handle the missing case.
 
 ### `pub const config` options
 
