@@ -2,7 +2,7 @@ const std = @import("std");
 const chizel = @import("chizel");
 const ArgIterator = std.process.ArgIterator;
 
-const Opts = struct {
+const Config = struct {
     host: []const u8 = "localhost",
     port: u16 = 8080,
     verbose: bool = false,
@@ -19,10 +19,11 @@ pub fn main() !void {
     var args: ArgIterator = try std.process.argsWithAllocator(alloc);
     defer args.deinit();
     const arena = std.heap.ArenaAllocator.init(alloc);
-    var parser = chizel.Chizel(Opts, *ArgIterator).init(&args, arena);
+    var parser = chizel.Chizel(Config, *ArgIterator).init(&args, arena);
     defer parser.deinit();
     const opts = try parser.parse();
 
+    // For debugging and viewing parsed options
     const dump = try opts.emitParsed(alloc);
     defer alloc.free(dump);
     std.debug.print("{s}\n", .{dump});

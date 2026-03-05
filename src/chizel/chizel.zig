@@ -7,10 +7,9 @@ const fields = std.meta.fields;
 const eql = std.mem.eql;
 const indexOf = std.mem.indexOf;
 
-/// ZiggyParse — comptime struct-driven CLI argument parser.
+/// Chizel — comptime struct-driven CLI argument parser.
 ///
-/// A lightweight alternative to `ArgParser` for simple use cases. Define your
-/// options as a plain Zig struct with default values and ZiggyParse handles the rest.
+/// Define your options as a plain Zig struct with default values and Chizel handles the rest.
 /// All allocations are backed by an `ArenaAllocator` and freed with a single `deinit`.
 ///
 /// ## Type parameters
@@ -53,7 +52,7 @@ const indexOf = std.mem.indexOf;
 /// defer args.deinit();
 ///
 /// const arena = std.heap.ArenaAllocator.init(allocator);
-/// var parser = ZiggyParse(Opts, *ArgIterator).init(&args, arena);
+/// var parser = Chizel(Opts, *ArgIterator).init(&args, arena);
 /// defer parser.deinit();
 ///
 /// const result = try parser.parse();
@@ -106,18 +105,18 @@ const indexOf = std.mem.indexOf;
 /// undefined behaviour. Always `defer parser.deinit()` immediately after `init`:
 ///
 /// ```zig
-/// var parser = ZiggyParse(Opts, *ArgIterator).init(&args, arena);
+/// var parser = Chizel(Opts, *ArgIterator).init(&args, arena);
 /// defer parser.deinit();              // runs last — correct
 /// const result = try parser.parse(); // result borrows from arena
 /// ```
-pub fn ZiggyParse(comptime Options: type, comptime IterType: type) type {
-    if (@typeInfo(Options) != .@"struct") @compileError("ZiggyParse: `Options` must be a struct.");
+pub fn Chizel(comptime Options: type, comptime IterType: type) type {
+    if (@typeInfo(Options) != .@"struct") @compileError("Chizel: `Options` must be a struct.");
 
     // Require all Options fields to have defaults so initDefaults() is always safe.
     inline for (std.meta.fields(Options)) |field| {
         if (field.default_value_ptr == null) {
-            @compileError("ZiggyParse: field `" ++ field.name ++ "` must have a default value. " ++
-                "For required arguments use `?T = null` or switch to ArgParser.");
+            @compileError("Chizel: field `" ++ field.name ++ "` must have a default value. " ++
+                "For required arguments use `?T = null`.");
         }
     }
 
@@ -198,6 +197,44 @@ pub fn ZiggyParse(comptime Options: type, comptime IterType: type) type {
             /// When true, `opts` may be partially populated — check this first.
             had_help: bool,
 
+            /// Return a human-readable dump of the parsed result, useful for
+            /// debugging. Caller owns the returned slice.
+            pub fn emitParsed(self: *const @This(), allocator: Allocator) ![]const u8 {
+                var buff = std.io.Writer.Allocating.init(allocator);
+                errdefer buff.deinit();
+
+                try buff.writer.print("prog: {s}\n", .{self.prog});
+                try buff.writer.print("had_help: {}\n", .{self.had_help});
+
+                try buff.writer.print("positionals: [", .{});
+                for (self.positionals, 0..) |p, i| {
+                    if (i > 0) try buff.writer.print(", ", .{});
+                    try buff.writer.print("{s}", .{p});
+                }
+                try buff.writer.print("]\n", .{});
+
+                if (self.unknown_options.len > 0) {
+                    try buff.writer.print("unknown_options: [", .{});
+                    for (self.unknown_options, 0..) |u, i| {
+                        if (i > 0) try buff.writer.print(", ", .{});
+                        try buff.writer.print("{s}", .{u});
+                    }
+                    try buff.writer.print("]\n", .{});
+                }
+
+                try buff.writer.print("opts:\n", .{});
+                inline for (fields(Options)) |field| {
+                    const val = @field(self.opts, field.name);
+                    try buff.writer.print("  {s}: ", .{field.name});
+                    try emitValue(field.type, val, &buff.writer);
+                    try buff.writer.print("\n", .{});
+                }
+
+                return buff.toOwnedSlice();
+            }
+
+            /// Generates the constructed help message. The caller is responsible
+            /// for freeing all memory.
             pub fn printHelp(self: *const @This(), allocator: Allocator) ![]const u8 {
                 var buff = std.io.Writer.Allocating.init(allocator);
                 try buff.writer.print("Usage: {s} [OPTIONS]\n\nOptions:\n", .{self.prog});
@@ -233,6 +270,32 @@ pub fn ZiggyParse(comptime Options: type, comptime IterType: type) type {
                 return buff.toOwnedSlice();
             }
         };
+
+        fn emitValue(comptime T: type, val: T, writer: anytype) !void {
+            switch (T) {
+                bool => try writer.print("{}", .{val}),
+                []const u8 => try writer.print("\"{s}\"", .{val}),
+                []const []const u8 => {
+                    try writer.print("[", .{});
+                    for (val, 0..) |s, i| {
+                        if (i > 0) try writer.print(", ", .{});
+                        try writer.print("\"{s}\"", .{s});
+                    }
+                    try writer.print("]", .{});
+                },
+                else => switch (@typeInfo(T)) {
+                    .int, .float => try writer.print("{}", .{val}),
+                    .optional => |opt| {
+                        if (val) |inner| {
+                            try emitValue(opt.child, inner, writer);
+                        } else {
+                            try writer.print("null", .{});
+                        }
+                    },
+                    else => try writer.print("<{s}>", .{@typeName(T)}),
+                },
+            }
+        }
 
         fn initDefaults() Options {
             var val: Options = undefined;
@@ -396,164 +459,4 @@ pub fn ZiggyParse(comptime Options: type, comptime IterType: type) type {
             return token[1] == '-' or isAlphabetic(token[1]);
         }
     };
-}
-
-pub const CompletionShell = enum { fish, zsh, bash };
-
-/// Generate shell completion script for the given `Options` struct.
-///
-/// `Options` must be the same struct type passed to `ZiggyParse`. Only the
-/// comptime shape of `Options` is used — no parser instance is needed.
-///
-/// - `.fish` — emits a file suitable for `~/.config/fish/completions/<prog>.fish`
-/// - `.bash` — emits a `complete` function suitable for sourcing in `.bashrc`
-/// - `.zsh`  — not yet implemented; returns `error.NotImplemented`
-pub fn genCompletions(
-    comptime Options: type,
-    target: CompletionShell,
-    allocator: Allocator,
-    prog: []const u8,
-) ![]const u8 {
-    return switch (target) {
-        .fish => genFishCompletions(Options, allocator, prog),
-        .bash => genBashCompletions(Options, allocator, prog),
-        .zsh => genZshCompletions(Options, allocator, prog),
-    };
-}
-
-fn genZshCompletions(
-    comptime Options: type,
-    allocator: Allocator,
-    prog: []const u8,
-) ![]const u8 {
-    var buff = std.io.Writer.Allocating.init(allocator);
-    errdefer buff.deinit();
-
-    try buff.writer.print("#compdef {s}\n\n", .{prog});
-    try buff.writer.print("_{s}() {{\n", .{prog});
-    try buff.writer.print("    _arguments -s -w \\\n", .{});
-
-    inline for (fields(Options)) |field| {
-        const base_type = switch (@typeInfo(field.type)) {
-            .optional => |o| o.child,
-            else => field.type,
-        };
-        const is_bool = base_type == bool;
-        const has_short = @hasDecl(Options, "shorts") and @hasField(@TypeOf(Options.shorts), field.name);
-        const has_help = @hasDecl(Options, "help") and @hasField(@TypeOf(Options.help), field.name);
-        const help_text: []const u8 = if (has_help) @field(Options.help, field.name) else field.name;
-
-        if (is_bool) {
-            if (has_short) {
-                const s: u8 = @field(Options.shorts, field.name);
-                try buff.writer.print("        '(-{c} --{s})-{c}[{s}]' \\\n", .{ s, field.name, s, help_text });
-                try buff.writer.print("        '(-{c} --{s})--{s}[{s}]' \\\n", .{ s, field.name, field.name, help_text });
-            } else {
-                try buff.writer.print("        '--{s}[{s}]' \\\n", .{ field.name, help_text });
-            }
-            try buff.writer.print("        '--no-{s}[Negate {s}]' \\\n", .{ field.name, field.name });
-        } else {
-            if (has_short) {
-                const s: u8 = @field(Options.shorts, field.name);
-                try buff.writer.print("        '(-{c} --{s})-{c}+[{s}]:{s}: ' \\\n", .{ s, field.name, s, help_text, field.name });
-                try buff.writer.print("        '(-{c} --{s})--{s}=[{s}]:{s}: ' \\\n", .{ s, field.name, field.name, help_text, field.name });
-            } else {
-                try buff.writer.print("        '--{s}=[{s}]:{s}: ' \\\n", .{ field.name, help_text, field.name });
-            }
-        }
-    }
-
-    try buff.writer.print("        '--help[Print this help message]' && return 0\n", .{});
-    try buff.writer.print("}}\n", .{});
-    try buff.writer.print("_{s} \"$@\"\n", .{prog});
-
-    return buff.toOwnedSlice();
-}
-
-fn genFishCompletions(
-    comptime Options: type,
-    allocator: Allocator,
-    prog: []const u8,
-) ![]const u8 {
-    var buff = std.io.Writer.Allocating.init(allocator);
-    errdefer buff.deinit();
-    try buff.writer.print("# ~/.config/fish/completions/{s}.fish\n", .{prog});
-
-    inline for (std.meta.fields(Options)) |field| {
-        const base_type = switch (@typeInfo(field.type)) {
-            .optional => |o| o.child,
-            else => field.type,
-        };
-        const kind: []const u8 = if (base_type == bool) "-f" else "-r -f";
-        const has_short = @hasDecl(Options, "shorts") and @hasField(@TypeOf(Options.shorts), field.name);
-        const has_help = @hasDecl(Options, "help") and @hasField(@TypeOf(Options.help), field.name);
-        if (has_help) {
-            const help: []const u8 = @field(Options.help, field.name);
-            if (has_short) {
-                const s: u8 = @field(Options.shorts, field.name);
-                try buff.writer.print("complete -c {s} -s {c} -l {s} {s} -d \"{s}\"\n", .{ prog, s, field.name, kind, help });
-            } else {
-                try buff.writer.print("complete -c {s} -l {s} {s} -d \"{s}\"\n", .{ prog, field.name, kind, help });
-            }
-        } else {
-            if (has_short) {
-                const s: u8 = @field(Options.shorts, field.name);
-                try buff.writer.print("complete -c {s} -s {c} -l {s} {s}\n", .{ prog, s, field.name, kind });
-            } else {
-                try buff.writer.print("complete -c {s} -l {s} {s}\n", .{ prog, field.name, kind });
-            }
-        }
-    }
-
-    return buff.toOwnedSlice();
-}
-
-fn genBashCompletions(
-    comptime Options: type,
-    allocator: Allocator,
-    prog: []const u8,
-) ![]const u8 {
-    var buff = std.io.Writer.Allocating.init(allocator);
-    errdefer buff.deinit();
-
-    try buff.writer.print("_{s}() {{\n", .{prog});
-    try buff.writer.print("    local cur prev opts\n", .{});
-    try buff.writer.print("    _init_completion || return\n", .{});
-
-    try buff.writer.print("    opts=\"--help -h", .{});
-    inline for (std.meta.fields(Options)) |field| {
-        try buff.writer.print(" --{s}", .{field.name});
-        const has_short = @hasDecl(Options, "shorts") and @hasField(@TypeOf(Options.shorts), field.name);
-        if (has_short) {
-            const s: u8 = @field(Options.shorts, field.name);
-            try buff.writer.print(" -{c}", .{s});
-        }
-    }
-    try buff.writer.print("\"\n", .{});
-
-    try buff.writer.print("    case \"$prev\" in\n", .{});
-    inline for (std.meta.fields(Options)) |field| {
-        const base_type = switch (@typeInfo(field.type)) {
-            .optional => |o| o.child,
-            else => field.type,
-        };
-        if (base_type == bool) continue;
-        const has_short = @hasDecl(Options, "shorts") and
-            @hasField(@TypeOf(Options.shorts), field.name);
-        if (has_short) {
-            const s: u8 = @field(Options.shorts, field.name);
-            try buff.writer.print("        --{s}|-{c})\n", .{ field.name, s });
-        } else {
-            try buff.writer.print("        --{s})\n", .{field.name});
-        }
-        try buff.writer.print("            return ;;\n", .{});
-    }
-
-    try buff.writer.print("    esac\n", .{});
-
-    try buff.writer.print("    COMPREPLY=($(compgen -W \"$opts\" -- \"$cur\"))\n", .{});
-    try buff.writer.print("}}\n", .{});
-    try buff.writer.print("complete -F _{s} {s}\n", .{ prog, prog });
-
-    return buff.toOwnedSlice();
 }
