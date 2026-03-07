@@ -14,9 +14,14 @@ const fields = std.meta.fields;
 /// Each subcommand struct may optionally declare:
 /// - `pub const shorts` to map field names to single-character aliases
 /// - `pub const help` with a `._cmd` field for the subcommand description
+/// - `pub fn validate_<field>(value: T) !void` to validate a parsed field value
+///
+/// Validation functions are called after parsing and may return any error, which
+/// is propagated directly from `parse()`. The function signature must accept one
+/// argument of the field's base type (unwrapped if optional).
 ///
 /// The first token after `argv[0]` is consumed as the subcommand name. Passing
-/// `--help` or `-h` before a subcommand sets `Result.had_help` without requiring
+/// `--help` before a subcommand sets `Result.had_help` without requiring
 /// a valid subcommand.
 ///
 /// ```zig
@@ -85,8 +90,6 @@ pub fn Chizel(comptime Options: type) type {
                         if (ca == cb) {
                             @compileError("Duplicate short flag '" ++ [_]u8{ca} ++ "' on fields `" ++
                                 fa.name ++ "` and `" ++ fb.name ++ "` in subcommand `" ++ ufield.name ++ "`");
-                        } else if (ca == 'h' or cb == 'h') {
-                            @compileError("Short flag 'h' conflicts with built-in --help. " ++ "Set `pub const config = .{ help_enabled = false }` to use -h yourself");
                         }
                     }
                 }
@@ -160,10 +163,10 @@ pub fn Chizel(comptime Options: type) type {
             /// Unrecognised flag names (without leading dashes).
             /// Only populated when `allow_unknown = true`.
             unknown_options: []const []const u8,
-            /// `true` when `--help` or `-h` appeared anywhere in argv.
+            /// `true` when `--help` appeared anywhere in argv.
             /// When true, `opts` may be partially populated; check this first.
             had_help: bool,
-            /// `true` when `--help` or `-h` appeared before any subcommand (root-level help).
+            /// `true` when `--help` appeared before any subcommand (root-level help).
             /// When true, `opts` is the first variant with defaults and should not be used.
             had_root_help: bool,
 
@@ -317,7 +320,7 @@ pub fn Chizel(comptime Options: type) type {
             const opts: Options = blk: {
                 if (cfg_help_enabled) {
                     if (self.iter.peek()) |peeked| {
-                        if (strEql(peeked, "--help") or strEql(peeked, "-h")) {
+                        if (strEql(peeked, "--help")) {
                             _ = self.iter.next();
                             had_help = true;
                             had_root_help = true;
@@ -410,7 +413,7 @@ pub fn Chizel(comptime Options: type) type {
                     while (self.iter.next()) |pos| try positionals.append(allocator, pos);
                     break;
                 }
-                if (cfg_help_enabled and (strEql(opt, "--help") or strEql(opt, "-h"))) {
+                if (cfg_help_enabled and strEql(opt, "--help")) {
                     had_help.* = true;
                     // Tokens must be drained after a call to help
                     while (self.iter.next()) |_| {}
@@ -466,11 +469,6 @@ pub fn Chizel(comptime Options: type) type {
                 } else if (startsWith(u8, opt, "-")) {
                     if (opt.len > 2) {
                         for (opt[1..]) |o| {
-                            if (cfg_help_enabled and o == 'h') {
-                                had_help.* = true;
-                                while (self.iter.next()) |_| {}
-                                return;
-                            }
                             var matched = false;
                             if (@hasDecl(T, "shorts")) {
                                 inline for (fields(T)) |field| {
@@ -593,6 +591,11 @@ pub fn Chizel(comptime Options: type) type {
 /// - `pub const shorts` to map field names to single-character aliases
 /// - `pub const help` to provide per-field descriptions for `Result.printHelp()`
 /// - `pub const config` to control parser behaviour (see below)
+/// - `pub fn validate_<field>(value: T) !void` to validate a parsed field value
+///
+/// Validation functions are called after parsing and may return any error, which
+/// is propagated directly from `parse()`. The function signature must accept one
+/// argument of the field's base type (unwrapped if optional).
 ///
 /// ```zig
 /// const Opts = struct {
@@ -614,7 +617,7 @@ pub fn Chizel(comptime Options: type) type {
 /// ```
 ///
 /// `config` fields (all optional, shown with defaults):
-/// - `help_enabled = true`: intercept `--help`/`-h` and set `Result.had_help`
+/// - `help_enabled = true`: intercept `--help` and set `Result.had_help`
 /// - `allow_unknown = false`: collect unrecognised flags in `Result.unknown_options`
 ///   instead of returning `error.UnknownOption`
 ///
@@ -646,8 +649,6 @@ pub fn Chip(comptime Options: type) type {
                     if (ca == cb) {
                         @compileError("Duplicate short flag '" ++ [_]u8{ca} ++ "' on fields `" ++
                             fa.name ++ "` and `" ++ fb.name ++ "`");
-                    } else if (ca == 'h' or cb == 'h') {
-                        @compileError("Short flag 'h' conflicts with built-in --help. " ++ "Set `pub const config = .{ help_enabled = false }` to use -h yourself");
                     }
                 }
             }
@@ -729,7 +730,7 @@ pub fn Chip(comptime Options: type) type {
             /// Unrecognised flag names (without leading dashes).
             /// Only populated when `allow_unknown = true`.
             unknown_options: []const []const u8,
-            /// `true` when `--help` or `-h` appeared anywhere in argv.
+            /// `true` when `--help` appeared anywhere in argv.
             /// When true, `opts` may be partially populated; check this first.
             had_help: bool,
 
@@ -821,7 +822,7 @@ pub fn Chip(comptime Options: type) type {
             // Tokens must be drained after a --help
             if (cfg_help_enabled) {
                 if (self.iter.peek()) |peeked| {
-                    if (strEql(peeked, "--help") or strEql(peeked, "-h")) {
+                    if (strEql(peeked, "--help")) {
                         _ = self.iter.next();
                         while (self.iter.next()) |_| {}
                         return .{
@@ -893,7 +894,7 @@ pub fn Chip(comptime Options: type) type {
                     while (self.iter.next()) |pos| try positionals.append(allocator, pos);
                     break;
                 }
-                if (cfg_help_enabled and (strEql(opt, "--help") or strEql(opt, "-h"))) {
+                if (cfg_help_enabled and strEql(opt, "--help")) {
                     had_help.* = true;
                     // Tokens must be drained after help
                     while (self.iter.next()) |_| {}
@@ -940,11 +941,6 @@ pub fn Chip(comptime Options: type) type {
                 } else if (startsWith(u8, opt, "-")) {
                     if (opt.len > 2) {
                         for (opt[1..]) |o| {
-                            if (cfg_help_enabled and o == 'h') {
-                                had_help.* = true;
-                                while (self.iter.next()) |_| {}
-                                return;
-                            }
                             var matched = false;
                             if (@hasDecl(T, "shorts")) {
                                 inline for (fields(T)) |field| {

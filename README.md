@@ -186,6 +186,36 @@ pub const config = .{
 | `help_enabled`  | `true`  | When true, `--help` and `-h` set `Result.had_help`. Disable to free `-h` for your own use. |
 | `allow_unknown` | `false` | When true, unrecognised flags are collected in `Result.unknown_options` instead of returning `error.UnknownOption`. |
 
+### Validation functions
+
+Add `pub fn validate_<field>(value: T) !void` to validate a parsed value. The
+function is called after parsing and its error is propagated directly from `parse()`.
+The argument type must match the field's base type (unwrapped if optional).
+
+```zig
+const Opts = struct {
+    port:    u16 = 8080,
+    jobs:    u8  = 1,
+
+    pub fn validate_port(value: u16) !void {
+        if (value < 1024) return error.PrivilegedPort;
+    }
+
+    pub fn validate_jobs(value: u8) !void {
+        if (value == 0) return error.ZeroJobs;
+    }
+};
+
+// Errors are returned from parse() and can be matched normally:
+const result = parser.parse() catch |err| switch (err) {
+    error.PrivilegedPort => { std.debug.print("port must be >= 1024\n", .{}); return; },
+    error.ZeroJobs       => { std.debug.print("jobs must be >= 1\n",    .{}); return; },
+    else                 => return err,
+};
+```
+
+Validation functions work the same way inside subcommand structs (for `Chizel`).
+
 ## Flag syntax
 
 | Syntax             | Meaning                                               |

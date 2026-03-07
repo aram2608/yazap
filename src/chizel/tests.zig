@@ -306,13 +306,24 @@ test "chip help: had_help true for --help" {
     try testing.expect(r.had_help);
 }
 
-test "chip help: had_help true for -h" {
+test "chip help: -h is not reserved, treated as unknown option" {
     const Opts = struct { verbose: bool = false };
     var iter = SliceIter{ .tokens = &.{ "prog", "-h" } };
     var p = chipParser(Opts, &iter);
     defer p.deinit();
+    try testing.expectError(error.UnknownOption, p.parse());
+}
+
+test "chip help: -h usable as short flag" {
+    const Opts = struct {
+        host: []const u8 = "localhost",
+        pub const shorts = .{ .host = 'h' };
+    };
+    var iter = SliceIter{ .tokens = &.{ "prog", "-h", "example.com" } };
+    var p = chipParser(Opts, &iter);
+    defer p.deinit();
     const r = try p.parse();
-    try testing.expect(r.had_help);
+    try testing.expectEqualStrings("example.com", r.opts.host);
 }
 
 test "chip help: false when absent" {
