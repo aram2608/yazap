@@ -775,3 +775,239 @@ test "chizel printHelp: subcommand --help shows subcommand options" {
     try testing.expect(std.mem.indexOf(u8, out, "Port to listen on") != null);
     try testing.expect(std.mem.indexOf(u8, out, "build") == null);
 }
+
+// Validation functions (Chip)
+
+test "chip validate: passes when value is valid" {
+    const Opts = struct {
+        port: u16 = 8080,
+        pub fn validate_port(value: u16) !void {
+            if (value < 1024) return error.PortTooLow;
+        }
+    };
+    var iter = SliceIter{ .tokens = &.{ "prog", "--port", "3000" } };
+    var p = chipParser(Opts, &iter);
+    defer p.deinit();
+    const r = try p.parse();
+    try testing.expectEqual(@as(u16, 3000), r.opts.port);
+}
+
+test "chip validate: returns error when value is invalid" {
+    const Opts = struct {
+        port: u16 = 8080,
+        pub fn validate_port(value: u16) !void {
+            if (value < 1024) return error.PortTooLow;
+        }
+    };
+    var iter = SliceIter{ .tokens = &.{ "prog", "--port", "80" } };
+    var p = chipParser(Opts, &iter);
+    defer p.deinit();
+    try testing.expectError(error.PortTooLow, p.parse());
+}
+
+test "chip validate: default value is also validated" {
+    const Opts = struct {
+        port: u16 = 80,
+        pub fn validate_port(value: u16) !void {
+            if (value < 1024) return error.PortTooLow;
+        }
+    };
+    var iter = SliceIter{ .tokens = &.{"prog"} };
+    var p = chipParser(Opts, &iter);
+    defer p.deinit();
+    try testing.expectError(error.PortTooLow, p.parse());
+}
+
+test "chip validate: multiple fields each validated" {
+    const Opts = struct {
+        port: u16 = 8080,
+        workers: u8 = 4,
+        pub fn validate_port(value: u16) !void {
+            if (value < 1024) return error.PortTooLow;
+        }
+        pub fn validate_workers(value: u8) !void {
+            if (value == 0) return error.NeedAtLeastOneWorker;
+        }
+    };
+    var iter = SliceIter{ .tokens = &.{ "prog", "--workers", "0" } };
+    var p = chipParser(Opts, &iter);
+    defer p.deinit();
+    try testing.expectError(error.NeedAtLeastOneWorker, p.parse());
+}
+
+test "chip validate: string field validated" {
+    const Opts = struct {
+        mode: []const u8 = "fast",
+        pub fn validate_mode(value: []const u8) !void {
+            const valid = &[_][]const u8{ "fast", "safe", "debug" };
+            for (valid) |v| if (std.mem.eql(u8, value, v)) return;
+            return error.InvalidMode;
+        }
+    };
+    var iter = SliceIter{ .tokens = &.{ "prog", "--mode", "turbo" } };
+    var p = chipParser(Opts, &iter);
+    defer p.deinit();
+    try testing.expectError(error.InvalidMode, p.parse());
+}
+
+test "chip validate: skipped when --help passed" {
+    const Opts = struct {
+        port: u16 = 80, // would fail validate_port if called
+        pub fn validate_port(value: u16) !void {
+            if (value < 1024) return error.PortTooLow;
+        }
+    };
+    var iter = SliceIter{ .tokens = &.{ "prog", "--port", "80", "--help" } };
+    var p = chipParser(Opts, &iter);
+    defer p.deinit();
+    const r = try p.parse();
+    try testing.expect(r.had_help);
+}
+
+test "chip validate: optional field validator receives inner type, skipped when null" {
+    const Opts = struct {
+        count: ?u32 = null,
+        pub fn validate_count(value: u32) !void {
+            if (value == 0) return error.CountMustBePositive;
+        }
+    };
+    // Absent: validator not called (null skipped)
+    var iter = SliceIter{ .tokens = &.{"prog"} };
+    var p = chipParser(Opts, &iter);
+    defer p.deinit();
+    const r = try p.parse();
+    try testing.expect(r.opts.count == null);
+}
+
+test "chip validate: optional field validator called when value present" {
+    const Opts = struct {
+        count: ?u32 = null,
+        pub fn validate_count(value: u32) !void {
+            if (value == 0) return error.CountMustBePositive;
+        }
+    };
+    var iter = SliceIter{ .tokens = &.{ "prog", "--count", "0" } };
+    var p = chipParser(Opts, &iter);
+    defer p.deinit();
+    try testing.expectError(error.CountMustBePositive, p.parse());
+}
+
+test "chip validate: unvalidated fields are unaffected" {
+    const Opts = struct {
+        port: u16 = 8080,
+        verbose: bool = false,
+        pub fn validate_port(value: u16) !void {
+            if (value < 1024) return error.PortTooLow;
+        }
+    };
+    var iter = SliceIter{ .tokens = &.{ "prog", "--port", "9090", "--verbose" } };
+    var p = chipParser(Opts, &iter);
+    defer p.deinit();
+    const r = try p.parse();
+    try testing.expectEqual(@as(u16, 9090), r.opts.port);
+    try testing.expect(r.opts.verbose);
+}
+
+// Validation functions (Chizel)
+
+test "chizel validate: passes for active subcommand" {
+    const Cmds = union(enum) {
+        serve: struct {
+            port: u16 = 8080,
+            pub fn validate_port(value: u16) !void {
+                if (value < 1024) return error.PortTooLow;
+            }
+        },
+        build: struct { release: bool = false },
+    };
+    var iter = SliceIter{ .tokens = &.{ "prog", "serve", "--port", "4000" } };
+    var p = chizelParser(Cmds, &iter);
+    defer p.deinit();
+    const r = try p.parse();
+    try testing.expectEqual(@as(u16, 4000), r.opts.serve.port);
+}
+
+test "chizel validate: returns error for active subcommand" {
+    const Cmds = union(enum) {
+        serve: struct {
+            port: u16 = 8080,
+            pub fn validate_port(value: u16) !void {
+                if (value < 1024) return error.PortTooLow;
+            }
+        },
+        build: struct { release: bool = false },
+    };
+    var iter = SliceIter{ .tokens = &.{ "prog", "serve", "--port", "80" } };
+    var p = chizelParser(Cmds, &iter);
+    defer p.deinit();
+    try testing.expectError(error.PortTooLow, p.parse());
+}
+
+test "chizel validate: inactive subcommand validator not called" {
+    // build has no validate_release, but serve's validate_port would
+    // fail if called with the default. This confirms only the active
+    // subcommand's validators run.
+    const Cmds = union(enum) {
+        serve: struct {
+            port: u16 = 80, // would fail validate_port if called
+            pub fn validate_port(value: u16) !void {
+                if (value < 1024) return error.PortTooLow;
+            }
+        },
+        build: struct { release: bool = false },
+    };
+    var iter = SliceIter{ .tokens = &.{ "prog", "build" } };
+    var p = chizelParser(Cmds, &iter);
+    defer p.deinit();
+    // Should succeed: serve's validator must not run
+    const r = try p.parse();
+    try testing.expect(r.opts == .build);
+}
+
+test "chizel validate: skipped when --help passed" {
+    const Cmds = union(enum) {
+        serve: struct {
+            port: u16 = 80, // would fail validate_port if called
+            pub fn validate_port(value: u16) !void {
+                if (value < 1024) return error.PortTooLow;
+            }
+        },
+    };
+    var iter = SliceIter{ .tokens = &.{ "prog", "serve", "--port", "80", "--help" } };
+    var p = chizelParser(Cmds, &iter);
+    defer p.deinit();
+    const r = try p.parse();
+    try testing.expect(r.had_help);
+}
+
+test "chizel validate: optional field skipped when null, called when present" {
+    const Cmds = union(enum) {
+        run: struct {
+            count: ?u32 = null,
+            pub fn validate_count(value: u32) !void {
+                if (value == 0) return error.CountMustBePositive;
+            }
+        },
+    };
+    // Absent: validator not called
+    var iter = SliceIter{ .tokens = &.{ "prog", "run" } };
+    var p = chizelParser(Cmds, &iter);
+    defer p.deinit();
+    const r = try p.parse();
+    try testing.expect(r.opts.run.count == null);
+}
+
+test "chizel validate: optional field validator called when value present and invalid" {
+    const Cmds = union(enum) {
+        run: struct {
+            count: ?u32 = null,
+            pub fn validate_count(value: u32) !void {
+                if (value == 0) return error.CountMustBePositive;
+            }
+        },
+    };
+    var iter = SliceIter{ .tokens = &.{ "prog", "run", "--count", "0" } };
+    var p = chizelParser(Cmds, &iter);
+    defer p.deinit();
+    try testing.expectError(error.CountMustBePositive, p.parse());
+}

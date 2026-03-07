@@ -74,6 +74,7 @@ pub fn Chizel(comptime Options: type) type {
         false;
 
     comptime {
+        // Check for naming collisons at comptime
         for (union_info.fields) |ufield| {
             if (@hasDecl(ufield.type, "shorts")) {
                 const s_fields = fields(@TypeOf(ufield.type.shorts));
@@ -81,10 +82,31 @@ pub fn Chizel(comptime Options: type) type {
                     const ca: u8 = @field(ufield.type.shorts, fa.name);
                     for (s_fields[i + 1 ..]) |fb| {
                         const cb: u8 = @field(ufield.type.shorts, fb.name);
-                        if (ca == cb)
+                        if (ca == cb) {
                             @compileError("Duplicate short flag '" ++ [_]u8{ca} ++ "' on fields `" ++
                                 fa.name ++ "` and `" ++ fb.name ++ "` in subcommand `" ++ ufield.name ++ "`");
+                        } else if (ca == 'h' or cb == 'h') {
+                            @compileError("Short flag 'h' conflicts with built-in --help. " ++ "Set `pub const config = .{ help_enabled = false }` to use -h yourself");
+                        }
                     }
+                }
+            }
+            // Check for validation functions at comptime
+            for (fields(ufield.type)) |field| {
+                const fn_name = "validate_" ++ field.name;
+                if (@hasDecl(ufield.type, fn_name)) {
+                    const Fn = @TypeOf(@field(ufield.type, fn_name));
+                    const fn_info = @typeInfo(Fn);
+                    if (fn_info != .@"fn")
+                        @compileError(fn_name ++ " in subcommand `" ++ ufield.name ++ "` must be a function");
+                    const params = fn_info.@"fn".params;
+                    const expected_type = switch (@typeInfo(field.type)) {
+                        .optional => |opt| opt.child,
+                        else => field.type,
+                    };
+                    if (params.len != 1 or params[0].type != expected_type)
+                        @compileError(fn_name ++ " in subcommand `" ++ ufield.name ++ "` must take one argument of type " ++
+                            @typeName(expected_type));
                 }
             }
         }
@@ -192,6 +214,13 @@ pub fn Chizel(comptime Options: type) type {
             /// Generates the constructed help message. The caller is responsible
             /// for freeing all memory.
             pub fn printHelp(self: *const @This(), allocator: Allocator) ![]const u8 {
+                comptime {
+                    for (@typeInfo(Options).@"union".fields) |ufield| {
+                        if (!@hasDecl(ufield.type, "help") and !@hasDecl(Options, "help"))
+                            @compileError("printHelp: add `pub const help` to union `" ++
+                                @typeName(Options) ++ "` or to each subcommand struct.");
+                    }
+                }
                 var buff = std.io.Writer.Allocating.init(allocator);
                 errdefer buff.deinit();
 
@@ -322,15 +351,18 @@ pub fn Chizel(comptime Options: type) type {
                         matched = true;
                     }
                 }
-                // TODO: Crashing the program without explaining the problem
-                // is pretty harsh. Find a way to make errors more pleasant
-                // and informative for subcommands.
-                if (!matched)
+                if (!matched) {
+                    std.debug.print("error: unknown subcommand '{s}'\n\nValid subcommands:\n", .{subcmd});
+                    inline for (@typeInfo(Options).@"union".fields) |f| {
+                        const flag_name = comptime fieldToFlag(f.name);
+                        std.debug.print("  {s}\n", .{&flag_name});
+                    }
                     return error.UnknownSubcommand;
+                }
                 break :blk result;
             };
 
-            return .{
+            const result: Result = .{
                 .prog = path.basename(program_name),
                 .opts = opts,
                 .positionals = try positionals.toOwnedSlice(allocator),
@@ -338,6 +370,30 @@ pub fn Chizel(comptime Options: type) type {
                 .had_help = had_help,
                 .had_root_help = had_root_help,
             };
+
+            if (!result.had_help) {
+                const tag = std.meta.activeTag(result.opts);
+                inline for (@typeInfo(Options).@"union".fields) |ufield| {
+                    if (tag == @field(std.meta.Tag(Options), ufield.name)) {
+                        const sub = @field(result.opts, ufield.name);
+                        inline for (std.meta.fields(ufield.type)) |field| {
+                            const fn_name = comptime "validate_" ++ field.name;
+                            if (comptime @hasDecl(ufield.type, fn_name)) {
+                                switch (@typeInfo(field.type)) {
+                                    .optional => {
+                                        if (@field(sub, field.name)) |inner|
+                                            try @field(ufield.type, fn_name)(inner);
+                                    },
+                                    else => try @field(ufield.type, fn_name)(@field(sub, field.name)),
+                                }
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+
+            return result;
         }
 
         fn parseStructOpts(
@@ -579,6 +635,7 @@ pub fn Chip(comptime Options: type) type {
     else
         false;
 
+    // Check for naming collisions at comptime
     comptime {
         if (@hasDecl(Options, "shorts")) {
             const s_fields = fields(@TypeOf(Options.shorts));
@@ -586,10 +643,34 @@ pub fn Chip(comptime Options: type) type {
                 const ca: u8 = @field(Options.shorts, fa.name);
                 for (s_fields[i + 1 ..]) |fb| {
                     const cb: u8 = @field(Options.shorts, fb.name);
-                    if (ca == cb)
+                    if (ca == cb) {
                         @compileError("Duplicate short flag '" ++ [_]u8{ca} ++ "' on fields `" ++
                             fa.name ++ "` and `" ++ fb.name ++ "`");
+                    } else if (ca == 'h' or cb == 'h') {
+                        @compileError("Short flag 'h' conflicts with built-in --help. " ++ "Set `pub const config = .{ help_enabled = false }` to use -h yourself");
+                    }
                 }
+            }
+        }
+    }
+
+    // Look for validation functions at comptime
+    comptime {
+        for (fields(Options)) |field| {
+            const fn_name = "validate_" ++ field.name;
+            if (@hasDecl(Options, fn_name)) {
+                const Fn = @TypeOf(@field(Options, fn_name));
+                const fn_info = @typeInfo(Fn);
+                if (fn_info != .@"fn")
+                    @compileError(fn_name ++ " must be a function");
+                const params = fn_info.@"fn".params;
+                const expected_type = switch (@typeInfo(field.type)) {
+                    .optional => |opt| opt.child,
+                    else => field.type,
+                };
+                if (params.len != 1 or params[0].type != expected_type)
+                    @compileError(fn_name ++ " must take exactly one argument of type " ++
+                        @typeName(expected_type));
             }
         }
     }
@@ -604,16 +685,6 @@ pub fn Chip(comptime Options: type) type {
 
     if (cfg_help_enabled and @hasField(Options, "help"))
         @compileError("Field named `help` conflicts with built-in --help handling.");
-
-    comptime {
-        if (cfg_help_enabled and @hasDecl(Options, "shorts")) {
-            for (fields(@TypeOf(Options.shorts))) |field| {
-                const s: u8 = @field(Options.shorts, field.name);
-                if (s == 'h')
-                    @compileError("Short flag 'h' conflicts with built-in --help. " ++ "Set `pub const config = .{ help_enabled = false }` to use -h yourself");
-            }
-        }
-    }
 
     return struct {
         arena: std.heap.ArenaAllocator,
@@ -774,13 +845,30 @@ pub fn Chip(comptime Options: type) type {
                 allocator,
             );
 
-            return .{
+            const result: Result = .{
                 .prog = path.basename(program_name),
                 .opts = opts,
                 .positionals = try positionals.toOwnedSlice(allocator),
                 .unknown_options = try unknown.toOwnedSlice(allocator),
                 .had_help = had_help,
             };
+
+            if (!result.had_help) {
+                inline for (std.meta.fields(Options)) |field| {
+                    const fn_name = comptime "validate_" ++ field.name;
+                    if (comptime @hasDecl(Options, fn_name)) {
+                        switch (@typeInfo(field.type)) {
+                            .optional => {
+                                if (@field(result.opts, field.name)) |inner|
+                                    try @field(Options, fn_name)(inner);
+                            },
+                            else => try @field(Options, fn_name)(@field(result.opts, field.name)),
+                        }
+                    }
+                }
+            }
+
+            return result;
         }
 
         /// Frees all memory allocated during `parse`.

@@ -20,7 +20,7 @@ pub fn main() !void {
     var args: ArgIterator = try std.process.argsWithAllocator(alloc);
     defer args.deinit();
     const arena = std.heap.ArenaAllocator.init(alloc);
-    var parser = chizel.Chizel(Config).init(&args, arena);
+    var parser = chizel.Chip(Config).init(&args, arena);
     defer parser.deinit();
     const opts = try parser.parse();
 

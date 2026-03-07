@@ -6,6 +6,13 @@ const Commands = union(enum) {
     foo: struct {
         foo: bool = false,
 
+        pub fn validate_foo(value: bool) !void {
+            if (!value) {
+                std.debug.print("foo not found\n", .{});
+                return error.FooNotTrue;
+            }
+        }
+
         pub const help = .{ .foo = "Nested bar bro" };
         pub const shorts = .{ .foo = 'f' };
     },
@@ -36,7 +43,9 @@ pub fn main() !void {
     const arena = std.heap.ArenaAllocator.init(alloc);
     var parser = chizel.Chizel(Commands).init(&args, arena);
     defer parser.deinit();
-    const r = try parser.parse();
+    const r = parser.parse() catch |err| switch (err) {
+        else => return,
+    };
 
     if (r.had_help) {
         const help = try r.printHelp(alloc);
