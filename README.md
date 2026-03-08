@@ -7,8 +7,6 @@ Two parsers are provided:
 - **`Chip(Opts)`** for single-command programs (struct-based options)
 - **`Chizel(Cmds)`** for programs with subcommands (union-based)
 
-No runtime setup, no registration calls. All config lives in the type itself.
-
 ## Installation
 
 ```sh
