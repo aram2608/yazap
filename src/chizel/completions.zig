@@ -2,6 +2,17 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const fields = std.meta.fields;
 
+/// Comptime-builds a space-separated string of all enum field names.
+/// e.g. for `enum { json, yaml, toml }` returns `"json yaml toml"`.
+fn enumVariants(comptime T: type) []const u8 {
+    comptime var result: []const u8 = "";
+    inline for (std.meta.fields(T), 0..) |f, i| {
+        if (i > 0) result = result ++ " ";
+        result = result ++ f.name;
+    }
+    return result;
+}
+
 pub const CompletionShell = enum { fish, zsh, bash };
 
 /// Generate shell completion script for the given `Options` struct or union.
@@ -89,6 +100,8 @@ fn writeZshStructArgs(comptime Opts: type, comptime indent: []const u8, writer: 
         const has_help = @hasDecl(Opts, "help") and @hasField(@TypeOf(Opts.help), field.name);
         const help_text: []const u8 = if (has_help) @field(Opts.help, field.name) else field.name;
 
+        const is_enum = @typeInfo(base_type) == .@"enum";
+
         if (is_bool) {
             if (has_short) {
                 const s: u8 = @field(Opts.shorts, field.name);
@@ -98,6 +111,15 @@ fn writeZshStructArgs(comptime Opts: type, comptime indent: []const u8, writer: 
                 try writer.print(indent ++ "'--{s}[{s}]' \\\n", .{ field.name, help_text });
             }
             try writer.print(indent ++ "'--no-{s}[Negate {s}]' \\\n", .{ field.name, field.name });
+        } else if (is_enum) {
+            const variants = comptime enumVariants(base_type);
+            if (has_short) {
+                const s: u8 = @field(Opts.shorts, field.name);
+                try writer.print(indent ++ "'(-{c} --{s})-{c}+[{s}]:{s}:({s})' \\\n", .{ s, field.name, s, help_text, field.name, variants });
+                try writer.print(indent ++ "'(-{c} --{s})--{s}=[{s}]:{s}:({s})' \\\n", .{ s, field.name, field.name, help_text, field.name, variants });
+            } else {
+                try writer.print(indent ++ "'--{s}=[{s}]:{s}:({s})' \\\n", .{ field.name, help_text, field.name, variants });
+            }
         } else {
             if (has_short) {
                 const s: u8 = @field(Opts.shorts, field.name);
@@ -163,7 +185,11 @@ fn writeFishStructFlags(
             .optional => |o| o.child,
             else => field.type,
         };
-        const kind: []const u8 = if (base_type == bool) "-f" else "-r -f";
+        const kind: []const u8 = comptime blk: {
+            if (base_type == bool) break :blk "-f";
+            if (@typeInfo(base_type) == .@"enum") break :blk "-r -f -a \"" ++ enumVariants(base_type) ++ "\"";
+            break :blk "-r -f";
+        };
         const has_short = @hasDecl(Opts, "shorts") and @hasField(@TypeOf(Opts.shorts), field.name);
         const has_help = @hasDecl(Opts, "help") and @hasField(@TypeOf(Opts.help), field.name);
 
@@ -258,13 +284,24 @@ fn genBashCompletions(
                     else => sub_field.type,
                 };
                 if (base_type == bool) continue;
+                const is_enum = @typeInfo(base_type) == .@"enum";
                 const has_short = @hasDecl(f.type, "shorts") and
                     @hasField(@TypeOf(f.type.shorts), sub_field.name);
-                if (has_short) {
-                    const s: u8 = @field(f.type.shorts, sub_field.name);
-                    try buff.writer.print("                --{s}|-{c}) return ;;\n", .{ sub_field.name, s });
+                if (is_enum) {
+                    const variants = comptime enumVariants(base_type);
+                    if (has_short) {
+                        const s: u8 = @field(f.type.shorts, sub_field.name);
+                        try buff.writer.print("                --{s}|-{c}) COMPREPLY=($(compgen -W \"{s}\" -- \"$cur\")); return ;;\n", .{ sub_field.name, s, variants });
+                    } else {
+                        try buff.writer.print("                --{s}) COMPREPLY=($(compgen -W \"{s}\" -- \"$cur\")); return ;;\n", .{ sub_field.name, variants });
+                    }
                 } else {
-                    try buff.writer.print("                --{s}) return ;;\n", .{sub_field.name});
+                    if (has_short) {
+                        const s: u8 = @field(f.type.shorts, sub_field.name);
+                        try buff.writer.print("                --{s}|-{c}) return ;;\n", .{ sub_field.name, s });
+                    } else {
+                        try buff.writer.print("                --{s}) return ;;\n", .{sub_field.name});
+                    }
                 }
             }
             try buff.writer.print("            esac\n", .{});
@@ -307,15 +344,26 @@ fn genBashCompletions(
                 else => field.type,
             };
             if (base_type == bool) continue;
+            const is_enum = @typeInfo(base_type) == .@"enum";
             const has_short = @hasDecl(Options, "shorts") and
                 @hasField(@TypeOf(Options.shorts), field.name);
-            if (has_short) {
-                const s: u8 = @field(Options.shorts, field.name);
-                try buff.writer.print("        --{s}|-{c})\n", .{ field.name, s });
+            if (is_enum) {
+                const variants = comptime enumVariants(base_type);
+                if (has_short) {
+                    const s: u8 = @field(Options.shorts, field.name);
+                    try buff.writer.print("        --{s}|-{c}) COMPREPLY=($(compgen -W \"{s}\" -- \"$cur\")); return ;;\n", .{ field.name, s, variants });
+                } else {
+                    try buff.writer.print("        --{s}) COMPREPLY=($(compgen -W \"{s}\" -- \"$cur\")); return ;;\n", .{ field.name, variants });
+                }
             } else {
-                try buff.writer.print("        --{s})\n", .{field.name});
+                if (has_short) {
+                    const s: u8 = @field(Options.shorts, field.name);
+                    try buff.writer.print("        --{s}|-{c})\n", .{ field.name, s });
+                } else {
+                    try buff.writer.print("        --{s})\n", .{field.name});
+                }
+                try buff.writer.print("            return ;;\n", .{});
             }
-            try buff.writer.print("            return ;;\n", .{});
         }
         try buff.writer.print("    esac\n\n", .{});
     }

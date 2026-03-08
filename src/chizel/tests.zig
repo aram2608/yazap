@@ -2,6 +2,8 @@ const std = @import("std");
 const testing = std.testing;
 const Chizel = @import("chizel.zig").Chizel;
 const Chip = @import("chizel.zig").Chip;
+const genCompletions = @import("completions.zig").genCompletions;
+const CompletionShell = @import("completions.zig").CompletionShell;
 
 const SliceIter = struct {
     tokens: []const []const u8,
@@ -1365,4 +1367,151 @@ test "chip env: string slice field not settable from env var" {
     defer p.deinit();
     const r = try p.parse();
     try testing.expectEqual(@as(usize, 0), r.opts.cztest_tags.len);
+}
+
+// ── Completion tests ──────────────────────────────────────────────────────────
+
+const Color = enum { auto, always, never };
+
+const CompOpts = struct {
+    verbose: bool = false,
+    color: Color = .auto,
+    port: u16 = 8080,
+    pub const shorts = .{ .color = 'c', .port = 'p' };
+    pub const help = .{ .verbose = "Verbose output", .color = "Color mode", .port = "Port number" };
+};
+
+const CompCmds = union(enum) {
+    serve: struct {
+        port: u16 = 8080,
+        color: Color = .auto,
+        pub const shorts = .{ .color = 'c' };
+        pub const help = .{ ._cmd = "Start server", .port = "Port", .color = "Color mode" };
+    },
+    build: struct {
+        release: bool = false,
+        pub const help = .{ ._cmd = "Build project", .release = "Release mode" };
+    },
+};
+
+// Fish — Chip
+
+test "fish chip: flag names present" {
+    const out = try genCompletions(CompOpts, .fish, testing.allocator, "myprog");
+    defer testing.allocator.free(out);
+    // fish uses -l <name>, not --name
+    try testing.expect(std.mem.indexOf(u8, out, "-l verbose") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "-l color") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "-l port") != null);
+}
+
+test "fish chip: short flags present" {
+    const out = try genCompletions(CompOpts, .fish, testing.allocator, "myprog");
+    defer testing.allocator.free(out);
+    try testing.expect(std.mem.indexOf(u8, out, "-s c") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "-s p") != null);
+}
+
+test "fish chip: enum variants suggested" {
+    const out = try genCompletions(CompOpts, .fish, testing.allocator, "myprog");
+    defer testing.allocator.free(out);
+    try testing.expect(std.mem.indexOf(u8, out, "auto always never") != null);
+}
+
+// Fish — Chizel
+
+test "fish chizel: subcommand names present" {
+    const out = try genCompletions(CompCmds, .fish, testing.allocator, "myprog");
+    defer testing.allocator.free(out);
+    try testing.expect(std.mem.indexOf(u8, out, "-a serve") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "-a build") != null);
+}
+
+test "fish chizel: subcommand flags gated by condition" {
+    const out = try genCompletions(CompCmds, .fish, testing.allocator, "myprog");
+    defer testing.allocator.free(out);
+    try testing.expect(std.mem.indexOf(u8, out, "__fish_seen_subcommand_from serve") != null);
+    // fish uses -l <name>, not --name
+    try testing.expect(std.mem.indexOf(u8, out, "-l release") != null);
+}
+
+test "fish chizel: enum variants suggested per subcommand" {
+    const out = try genCompletions(CompCmds, .fish, testing.allocator, "myprog");
+    defer testing.allocator.free(out);
+    try testing.expect(std.mem.indexOf(u8, out, "auto always never") != null);
+}
+
+// Zsh — Chip
+
+test "zsh chip: flag specs present" {
+    const out = try genCompletions(CompOpts, .zsh, testing.allocator, "myprog");
+    defer testing.allocator.free(out);
+    try testing.expect(std.mem.indexOf(u8, out, "--verbose") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "--color=") != null);
+}
+
+test "zsh chip: enum variants as action" {
+    const out = try genCompletions(CompOpts, .zsh, testing.allocator, "myprog");
+    defer testing.allocator.free(out);
+    // enum action format: :(auto always never)
+    try testing.expect(std.mem.indexOf(u8, out, ":(auto always never)") != null);
+}
+
+test "zsh chip: bool negation present" {
+    const out = try genCompletions(CompOpts, .zsh, testing.allocator, "myprog");
+    defer testing.allocator.free(out);
+    try testing.expect(std.mem.indexOf(u8, out, "--no-verbose") != null);
+}
+
+// Zsh — Chizel
+
+test "zsh chizel: subcommand list present" {
+    const out = try genCompletions(CompCmds, .zsh, testing.allocator, "myprog");
+    defer testing.allocator.free(out);
+    try testing.expect(std.mem.indexOf(u8, out, "'serve:") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "'build:") != null);
+}
+
+test "zsh chizel: per-subcommand flags present" {
+    const out = try genCompletions(CompCmds, .zsh, testing.allocator, "myprog");
+    defer testing.allocator.free(out);
+    try testing.expect(std.mem.indexOf(u8, out, "--release") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "--port=") != null);
+}
+
+test "zsh chizel: enum variants as action" {
+    const out = try genCompletions(CompCmds, .zsh, testing.allocator, "myprog");
+    defer testing.allocator.free(out);
+    try testing.expect(std.mem.indexOf(u8, out, ":(auto always never)") != null);
+}
+
+// Bash — Chip
+
+test "bash chip: opts string contains flags" {
+    const out = try genCompletions(CompOpts, .bash, testing.allocator, "myprog");
+    defer testing.allocator.free(out);
+    try testing.expect(std.mem.indexOf(u8, out, "--verbose") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "--color") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "--port") != null);
+}
+
+test "bash chip: enum prev-case completes variants" {
+    const out = try genCompletions(CompOpts, .bash, testing.allocator, "myprog");
+    defer testing.allocator.free(out);
+    try testing.expect(std.mem.indexOf(u8, out, "compgen -W \"auto always never\"") != null);
+}
+
+// Bash — Chizel
+
+test "bash chizel: subcommands listed" {
+    const out = try genCompletions(CompCmds, .bash, testing.allocator, "myprog");
+    defer testing.allocator.free(out);
+    try testing.expect(std.mem.indexOf(u8, out, "serve") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "build") != null);
+}
+
+test "bash chizel: per-subcommand enum prev-case completes variants" {
+    const out = try genCompletions(CompCmds, .bash, testing.allocator, "myprog");
+    defer testing.allocator.free(out);
+    try testing.expect(std.mem.indexOf(u8, out, "compgen -W \"auto always never\"") != null);
 }

@@ -68,6 +68,7 @@
 pub const Chip = @import("chizel/chizel.zig").Chip;
 pub const Chizel = @import("chizel/chizel.zig").Chizel;
 pub const genCompletions = @import("chizel/completions.zig").genCompletions;
+pub const CompletionShell = @import("chizel/completions.zig").CompletionShell;
 
 test {
     _ = @import("chizel/tests.zig");

@@ -304,14 +304,8 @@ pub fn Chizel(comptime Options: type) type {
                         matched = true;
                     }
                 }
-                if (!matched) {
-                    std.debug.print("error: unknown subcommand '{s}'\n\nValid subcommands:\n", .{subcmd});
-                    inline for (@typeInfo(Options).@"union".fields) |f| {
-                        const flag_name = comptime fieldToFlag(f.name);
-                        std.debug.print("  {s}\n", .{&flag_name});
-                    }
+                if (!matched)
                     return error.UnknownSubcommand;
-                }
                 break :blk result;
             };
 
@@ -622,6 +616,9 @@ fn checkShortsCollisions(comptime T: type, comptime context: []const u8) void {
     const s_fields = fields(@TypeOf(T.shorts));
     for (s_fields, 0..) |fa, i| {
         const ca: u8 = @field(T.shorts, fa.name);
+        // Short opts must be alphabetic
+        if (!isAlphabetic(ca)) @compileError("Short flag for `" ++ fa.name ++ "`" ++ context ++ " must be an alphabetic character");
+
         for (s_fields[i + 1 ..]) |fb| {
             const cb: u8 = @field(T.shorts, fb.name);
             if (ca == cb) {
@@ -862,7 +859,10 @@ fn parseNextImpl(
         // An inline value (--flag=foo) is treated as the first element.
         []const []const u8 => blk: {
             var list: std.ArrayList([]const u8) = .empty;
-            if (inline_val) |v| try list.append(allocator, try allocator.dupe(u8, v));
+            if (inline_val) |v| {
+                if (v.len == 0) return error.MissingValue;
+                try list.append(allocator, try allocator.dupe(u8, v));
+            }
             while (iter.peek()) |s| {
                 if (looksLikeOptionToken(s)) break;
                 _ = iter.next();
@@ -978,6 +978,12 @@ const ErasedIter = struct {
         }
         return self.peeked;
     }
+};
+
+const ParseError = struct {
+    field: []const u8 = "",
+    got: []const u8 = "",
+    expected: []const u8 = "",
 };
 
 // Returns true when `token` looks like the start of a flag (`--anything`
