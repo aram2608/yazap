@@ -5,6 +5,9 @@ const Allocator = std.mem.Allocator;
 const isAlphabetic = std.ascii.isAlphabetic;
 const fields = std.meta.fields;
 
+// TODO: Add a config flag or option to pass in so the user can shut off env
+// var parsing. common names like "path" can caused problems
+
 /// Subcommand parser. `Options` must be a tagged `union(enum)` where each variant
 /// names a subcommand and holds a struct of flags.
 ///
@@ -68,6 +71,7 @@ pub fn Chizel(comptime Options: type) type {
 
     const cfg_help_enabled = configFlag(Options, "help_enabled", true);
     const cfg_allow_unknown = configFlag(Options, "allow_unknown", false);
+    const cfg_parse_env = configFlag(Options, "parse_env", false);
 
     // Validation checks at comptime
     comptime {
@@ -278,6 +282,7 @@ pub fn Chizel(comptime Options: type) type {
                 }
                 // Need to replace '-' with '_' to match the struct field
                 const subcmd = self.iter.next() orelse return error.MissingSubcommand;
+                // Allocations are handled inside the arena so cleanup is easy
                 const normalized_sub = if (strIndexOfScalar(subcmd, '-') != null) tmp: {
                     const buf = try allocator.dupe(u8, subcmd);
                     std.mem.replaceScalar(u8, buf, '-', '_');
@@ -288,7 +293,8 @@ pub fn Chizel(comptime Options: type) type {
                 inline for (@typeInfo(Options).@"union".fields) |f| {
                     if (!matched and strEql(normalized_sub, f.name)) {
                         var sub: f.type = .{};
-                        try initializeEnvOptsImpl(f.type, &sub, allocator);
+                        if (cfg_parse_env)
+                            try initializeEnvOptsImpl(f.type, &sub, allocator);
                         try parseStructOptsImpl(
                             f.type,
                             cfg_help_enabled,
@@ -391,6 +397,7 @@ pub fn Chip(comptime Options: type) type {
 
     const cfg_help_enabled = configFlag(Options, "help_enabled", true);
     const cfg_allow_unknown = configFlag(Options, "allow_unknown", false);
+    const cfg_parse_env = configFlag(Options, "parse_env", false);
 
     // Require all Options fields to have defaults so initDefaults() is always safe.
     for (std.meta.fields(Options)) |field| {
@@ -541,7 +548,8 @@ pub fn Chip(comptime Options: type) type {
             }
 
             var opts: Options = .{};
-            try initializeEnvOptsImpl(Options, &opts, allocator);
+            if (cfg_parse_env)
+                try initializeEnvOptsImpl(Options, &opts, allocator);
             // Populate the options and overwrite initialized values.
             try parseStructOptsImpl(
                 Options,

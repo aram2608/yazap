@@ -176,6 +176,7 @@ Control parser behaviour. All fields are optional:
 pub const config = .{
     .help_enabled  = true,   // intercept --help / -h → Result.had_help
     .allow_unknown = false,  // collect unrecognised flags instead of erroring
+    .parse_env = true,       // parse environmental variables matching opts
 };
 ```
 
